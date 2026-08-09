@@ -2,118 +2,160 @@
 <html lang="es">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>photofix &mdash; fotos de producto listas para publicar</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#2f6f4e">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="photofix">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/static/icon-180.png">
+<link rel="icon" href="/static/icon-192.png" type="image/png">
+<title>photofix</title>
 <style>
   :root {
-    --bg: #f7f6f4;
-    --card: #ffffff;
-    --ink: #1c1b19;
-    --muted: #6d6a65;
-    --line: #e2ded8;
-    --accent: #2f6f4e;
-    --accent-soft: #e8f1ec;
-    --warn: #8a5a20;
-    --radius: 12px;
+    --bg: #f6f5f3; --card: #fff; --ink: #1c1b19; --muted: #6d6a65;
+    --line: #e3dfd9; --accent: #2f6f4e; --accent-soft: #e8f1ec;
+    --warn: #8a5a20; --danger: #b5462f; --radius: 14px;
+    --safe-b: env(safe-area-inset-bottom, 0px);
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #17181a; --card: #1f2124; --ink: #ececea; --muted: #a2a09b;
-      --line: #33363a; --accent: #7dc79f; --accent-soft: #22302a; --warn: #d6a860;
+      --bg: #16171a; --card: #1f2124; --ink: #ececea; --muted: #a3a19c;
+      --line: #34373b; --accent: #7dc79f; --accent-soft: #22302a;
+      --warn: #d6a860; --danger: #e2836a;
     }
   }
-  * { box-sizing: border-box; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { overscroll-behavior-y: contain; }
   body {
     margin: 0; background: var(--bg); color: var(--ink);
-    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding-bottom: calc(84px + var(--safe-b));
   }
+
   header {
-    padding: 26px 24px 18px; border-bottom: 1px solid var(--line);
-    background: var(--card);
+    position: sticky; top: 0; z-index: 20;
+    padding: max(12px, env(safe-area-inset-top)) 16px 12px;
+    background: color-mix(in srgb, var(--card) 88%, transparent);
+    backdrop-filter: saturate(180%) blur(14px);
+    border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; gap: 10px;
   }
-  header h1 { margin: 0; font-size: 20px; letter-spacing: -0.01em; }
-  header p { margin: 6px 0 0; color: var(--muted); font-size: 14px; max-width: 62ch; }
-  main { max-width: 1180px; margin: 0 auto; padding: 24px; }
+  header img { width: 28px; height: 28px; border-radius: 7px; }
+  header h1 { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: -.01em; }
+  header .sub { margin: 0; font-size: 12.5px; color: var(--muted); }
 
-  #drop {
-    border: 2px dashed var(--line); border-radius: var(--radius);
-    padding: 44px 20px; text-align: center; background: var(--card);
-    cursor: pointer; transition: border-color .15s, background .15s;
-  }
-  #drop.over { border-color: var(--accent); background: var(--accent-soft); }
-  #drop strong { display: block; font-size: 17px; margin-bottom: 4px; }
-  #drop span { color: var(--muted); font-size: 14px; }
+  main { padding: 16px; max-width: 900px; margin: 0 auto; }
 
-  .panel {
-    margin-top: 20px; background: var(--card); border: 1px solid var(--line);
-    border-radius: var(--radius); padding: 18px 20px;
+  .pick {
+    display: block; width: 100%; padding: 20px 16px; border-radius: var(--radius);
+    border: 2px dashed var(--line); background: var(--card); color: var(--ink);
+    text-align: center; font-size: 16px; font-weight: 600; cursor: pointer;
   }
-  .panel h2 { margin: 0 0 14px; font-size: 14px; text-transform: uppercase;
-              letter-spacing: .07em; color: var(--muted); }
-  .controls { display: grid; gap: 16px 22px;
-              grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
-  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 5px; }
+  .pick small { display: block; margin-top: 4px; font-weight: 400;
+                font-size: 13px; color: var(--muted); }
+  .pick.over { border-color: var(--accent); background: var(--accent-soft); }
+
+  details.settings {
+    margin-top: 14px; background: var(--card); border: 1px solid var(--line);
+    border-radius: var(--radius); overflow: hidden;
+  }
+  details.settings > summary {
+    padding: 14px 16px; font-weight: 600; font-size: 15px; cursor: pointer;
+    list-style: none; display: flex; justify-content: space-between;
+  }
+  details.settings > summary::-webkit-details-marker { display: none; }
+  details.settings > summary::after { content: '⌄'; color: var(--muted); }
+  details[open].settings > summary::after { content: '⌃'; }
+  .fields { padding: 0 16px 16px; display: grid; gap: 14px; }
+  @media (min-width: 620px) {
+    .fields { grid-template-columns: 1fr 1fr; }
+  }
+  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
   select, input[type=number] {
-    width: 100%; padding: 7px 9px; border: 1px solid var(--line);
-    border-radius: 8px; background: var(--bg); color: var(--ink); font-size: 14px;
+    width: 100%; padding: 11px 12px; font-size: 16px;  /* 16px stops iOS zooming */
+    border: 1px solid var(--line); border-radius: 10px;
+    background: var(--bg); color: var(--ink); -webkit-appearance: none;
   }
-  input[type=range] { width: 100%; accent-color: var(--accent); }
-  .check { display: flex; align-items: center; gap: 8px; margin-top: 22px; }
-  .check input { accent-color: var(--accent); width: 16px; height: 16px; }
-  .check label { margin: 0; color: var(--ink); font-size: 14px; }
+  input[type=range] { width: 100%; accent-color: var(--accent); height: 28px; }
+  .switch { display: flex; align-items: center; justify-content: space-between;
+            gap: 12px; padding: 4px 0; }
+  .switch span { font-size: 15px; }
+  .switch input { width: 22px; height: 22px; accent-color: var(--accent); }
 
-  .actions { margin-top: 18px; display: flex; gap: 10px; flex-wrap: wrap;
-             align-items: center; }
-  button {
-    font: inherit; font-weight: 550; padding: 9px 16px; border-radius: 9px;
-    border: 1px solid var(--accent); background: var(--accent); color: #fff;
-    cursor: pointer;
-  }
-  button.ghost { background: transparent; color: var(--accent); }
-  button:disabled { opacity: .45; cursor: default; }
-  #status { color: var(--muted); font-size: 14px; }
-
-  .grid { margin-top: 22px; display: grid; gap: 18px;
-          grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); }
+  .cards { margin-top: 16px; display: grid; gap: 16px; }
+  @media (min-width: 760px) { .cards { grid-template-columns: 1fr 1fr; } }
   .card { background: var(--card); border: 1px solid var(--line);
           border-radius: var(--radius); overflow: hidden; }
-  .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 1px;
-          background: var(--line); }
-  .shot { background: var(--bg); position: relative; }
-  .shot img { display: block; width: 100%; height: 230px; object-fit: contain; }
-  .shot b { position: absolute; top: 7px; left: 7px; font-size: 10px;
-            letter-spacing: .09em; text-transform: uppercase; font-weight: 600;
-            background: rgba(0,0,0,.62); color: #fff; padding: 2px 7px;
-            border-radius: 5px; }
-  .meta { padding: 12px 14px 14px; }
-  .meta .name { font-weight: 600; font-size: 14px; word-break: break-all; }
-  .meta .sum { color: var(--muted); font-size: 13px; margin-top: 3px; }
-  .meta .note { color: var(--warn); font-size: 12.5px; margin-top: 5px; }
-  .meta .err { color: #b5462f; font-size: 13px; margin-top: 5px; }
-  .tags { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
-  .tag { font-size: 11.5px; padding: 2px 8px; border-radius: 20px;
-         background: var(--accent-soft); color: var(--accent); font-weight: 550; }
-  footer { color: var(--muted); font-size: 12.5px; text-align: center;
-           padding: 26px 16px 40px; }
+
+  /* before/after comparison, dragged with a finger */
+  .compare { position: relative; width: 100%; background: var(--bg);
+             touch-action: pan-y; user-select: none; overflow: hidden; }
+  .compare img { display: block; width: 100%; height: 100%;
+                 object-fit: contain; pointer-events: none; }
+  .compare .after { position: absolute; inset: 0; clip-path: inset(0 0 0 50%); }
+  .compare .handle { position: absolute; top: 0; bottom: 0; left: 50%; width: 2px;
+                     background: #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.35);
+                     pointer-events: none; }
+  .compare .handle::after {
+    content: '⟺'; position: absolute; top: 50%; left: 50%; translate: -50% -50%;
+    width: 34px; height: 34px; border-radius: 50%; background: #fff; color: #333;
+    font-size: 15px; display: grid; place-items: center;
+    box-shadow: 0 1px 6px rgba(0,0,0,.3);
+  }
+  .compare .tag { position: absolute; top: 8px; font-size: 10px; font-weight: 700;
+                  letter-spacing: .08em; background: rgba(0,0,0,.6); color: #fff;
+                  padding: 3px 8px; border-radius: 6px; pointer-events: none; }
+  .compare .tag.l { left: 8px; } .compare .tag.r { right: 8px; }
+
+  .body { padding: 12px 14px 14px; }
+  .body .name { font-weight: 600; font-size: 14px; word-break: break-all; }
+  .body .sum { font-size: 13.5px; color: var(--muted); margin-top: 3px; }
+  .body .note { font-size: 12.5px; color: var(--warn); margin-top: 6px; }
+  .body .err { font-size: 13.5px; color: var(--danger); margin-top: 6px; }
+  .row { display: flex; gap: 8px; margin-top: 12px; }
+
+  button {
+    font: inherit; font-weight: 600; font-size: 15px; padding: 11px 16px;
+    border-radius: 11px; border: 1px solid var(--accent);
+    background: var(--accent); color: #fff; cursor: pointer; flex: 1;
+    min-height: 44px;                                /* comfortable touch target */
+  }
+  button.ghost { background: transparent; color: var(--accent); }
+  button:disabled { opacity: .45; }
+
+  .bar {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
+    padding: 10px 16px calc(10px + var(--safe-b));
+    background: color-mix(in srgb, var(--card) 92%, transparent);
+    backdrop-filter: saturate(180%) blur(14px);
+    border-top: 1px solid var(--line); display: flex; gap: 10px; align-items: center;
+  }
+  .bar #status { flex: 2; font-size: 13px; color: var(--muted); }
+  .bar button { flex: 1; }
+  .hint { margin-top: 18px; font-size: 12.5px; color: var(--muted); text-align: center; }
 </style>
 </head>
 <body>
+
 <header>
-  <h1>photofix</h1>
-  <p>Suelta las fotos del producto. Se enderezan, se recorta lo que no interesa
-     y salen centradas y listas para publicar. El fondo se conserva.</p>
+  <img src="/static/icon-192.png" alt="">
+  <div>
+    <h1>photofix</h1>
+    <p class="sub">Fotos rectas y recortadas, listas para publicar</p>
+  </div>
 </header>
 
 <main>
-  <div id="drop">
-    <strong>Arrastra tus fotos aqu&iacute;</strong>
-    <span>o pulsa para elegirlas &mdash; JPG, PNG, WEBP y HEIC del iPhone</span>
-    <input id="picker" type="file" multiple accept="image/*,.heic,.heif" hidden>
-  </div>
+  <label class="pick" id="pick" for="picker">
+    Elegir fotos
+    <small>de tu carrete o hechas ahora &mdash; también HEIC</small>
+  </label>
+  <input id="picker" type="file" multiple accept="image/*,.heic,.heif" hidden>
 
-  <section class="panel">
-    <h2>Ajustes</h2>
-    <div class="controls">
+  <details class="settings">
+    <summary>Ajustes</summary>
+    <div class="fields">
       <div>
         <label for="ratio">Formato</label>
         <select id="ratio">
@@ -121,7 +163,7 @@
         </select>
       </div>
       <div>
-        <label for="fill">Tama&ntilde;o del producto: <span id="fillv">86</span>%</label>
+        <label for="fill">Tamaño del producto: <span id="fillv">86</span>%</label>
         <input id="fill" type="range" min="40" max="100" value="86">
       </div>
       <div>
@@ -136,109 +178,174 @@
         <label for="max_side">Lado mayor (px)</label>
         <input id="max_side" type="number" min="400" max="6000" step="100" value="2000">
       </div>
-      <div>
-        <label for="format">Formato de salida</label>
-        <select id="format">
-          <option value="jpg">JPG</option>
-          <option value="png">PNG</option>
-          <option value="webp">WEBP</option>
-        </select>
+      <div class="switch">
+        <span>Enderezar</span><input id="straighten" type="checkbox" checked>
       </div>
-      <div class="check">
-        <input id="straighten" type="checkbox" checked>
-        <label for="straighten">Enderezar</label>
+      <div class="switch">
+        <span>Quitar objetos ajenos</span><input id="drop_distractors" type="checkbox" checked>
       </div>
-      <div class="check">
-        <input id="drop_distractors" type="checkbox" checked>
-        <label for="drop_distractors">Quitar objetos ajenos</label>
+      <div class="switch">
+        <span>Forzar el formato</span><input id="pad_to_ratio" type="checkbox">
       </div>
-      <div class="check">
-        <input id="pad_to_ratio" type="checkbox">
-        <label for="pad_to_ratio">Forzar el formato</label>
+      <div class="row">
+        <button id="apply" class="ghost" disabled>Aplicar cambios</button>
       </div>
     </div>
+  </details>
 
-    <div class="actions">
-      <button id="apply" disabled>Aplicar cambios</button>
-      <button id="zip" class="ghost" disabled>Descargar todo (.zip)</button>
-      <span id="status"></span>
-    </div>
-  </section>
-
-  <div class="grid" id="grid"></div>
+  <div class="cards" id="cards"></div>
+  <p class="hint" id="hint"></p>
 </main>
 
-<footer>photofix {{ version }} &mdash; todo se procesa en tu propio equipo.</footer>
+<div class="bar">
+  <span id="status">Sin fotos todavía</span>
+  <button id="saveAll" disabled>Guardar todas</button>
+</div>
 
 <script>
-const drop = document.getElementById('drop');
-const picker = document.getElementById('picker');
-const grid = document.getElementById('grid');
-const statusEl = document.getElementById('status');
-const applyBtn = document.getElementById('apply');
-const zipBtn = document.getElementById('zip');
-const fill = document.getElementById('fill');
-const fillv = document.getElementById('fillv');
-let job = null;
-let busy = false;
+const $ = id => document.getElementById(id);
+const picker = $('picker'), pick = $('pick'), cards = $('cards');
+const statusEl = $('status'), applyBtn = $('apply'), saveAllBtn = $('saveAll');
+const fill = $('fill'), fillv = $('fillv'), hint = $('hint');
+let job = null, items = [], busy = false;
+
+const canShareFiles = !!(navigator.canShare && navigator.share);
 
 fill.addEventListener('input', () => fillv.textContent = fill.value);
 
 function settings() {
   const fd = new FormData();
-  fd.append('ratio', document.getElementById('ratio').value);
+  fd.append('ratio', $('ratio').value);
   fd.append('fill', (parseInt(fill.value, 10) / 100).toFixed(2));
-  fd.append('enhance', document.getElementById('enhance').value);
-  fd.append('max_side', document.getElementById('max_side').value);
-  fd.append('format', document.getElementById('format').value);
-  fd.append('straighten', document.getElementById('straighten').checked);
-  fd.append('drop_distractors', document.getElementById('drop_distractors').checked);
-  fd.append('pad_to_ratio', document.getElementById('pad_to_ratio').checked);
+  fd.append('enhance', $('enhance').value);
+  fd.append('max_side', $('max_side').value);
+  fd.append('straighten', $('straighten').checked);
+  fd.append('drop_distractors', $('drop_distractors').checked);
+  fd.append('pad_to_ratio', $('pad_to_ratio').checked);
   return fd;
 }
 
-function setBusy(on, message) {
+function setBusy(on, msg) {
   busy = on;
   applyBtn.disabled = on || !job;
-  zipBtn.disabled = on || !job;
-  statusEl.textContent = message || '';
+  saveAllBtn.disabled = on || !job;
+  if (msg !== undefined) statusEl.textContent = msg;
 }
 
-function esc(s) {
-  return String(s).replace(/[&<>"]/g, c =>
-    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-}
+const esc = s => String(s).replace(/[&<>"]/g, c =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
-function render(items) {
-  grid.innerHTML = '';
-  for (const it of items) {
-    const card = document.createElement('div');
-    card.className = 'card';
-    if (!it.ok) {
-      card.innerHTML = `<div class="meta"><div class="name">${esc(it.name)}</div>
-        <div class="err">No se pudo procesar: ${esc(it.error || '')}</div></div>`;
-      grid.appendChild(card);
-      continue;
-    }
-    const tags = [];
-    if (Math.abs(it.rotated) >= 0.01) tags.push(`girada ${it.rotated > 0 ? '+' : ''}${it.rotated}&deg;`);
-    if (it.removed > 0) tags.push(`${it.removed} objeto(s) fuera`);
-    tags.push(it.size);
-    if (!it.detected) tags.push('producto no detectado');
+function makeCard(it) {
+  const card = document.createElement('div');
+  card.className = 'card';
 
-    card.innerHTML = `
-      <div class="pair">
-        <div class="shot"><b>antes</b><img loading="lazy" src="${it.original}" alt=""></div>
-        <div class="shot"><b>despu&eacute;s</b><img loading="lazy" src="${it.output}" alt=""></div>
-      </div>
-      <div class="meta">
-        <div class="name">${esc(it.out_name)}</div>
-        <div class="sum">${esc(it.summary)}</div>
-        <div class="tags">${tags.map(t => `<span class="tag">${t}</span>`).join('')}</div>
-        ${(it.warnings || []).map(w => `<div class="note">${esc(w)}</div>`).join('')}
-      </div>`;
-    grid.appendChild(card);
+  if (!it.ok) {
+    card.innerHTML = `<div class="body"><div class="name">${esc(it.name)}</div>
+      <div class="err">No se pudo procesar: ${esc(it.error || '')}</div></div>`;
+    return card;
   }
+
+  card.innerHTML = `
+    <div class="compare">
+      <img class="before" src="${it.original}" alt="antes">
+      <div class="after"><img src="${it.output}" alt="después"></div>
+      <span class="tag l">ANTES</span><span class="tag r">DESPUÉS</span>
+      <div class="handle"></div>
+    </div>
+    <div class="body">
+      <div class="name">${esc(it.out_name)}</div>
+      <div class="sum">${esc(it.summary)}</div>
+      ${(it.warnings || []).map(w => `<div class="note">${esc(w)}</div>`).join('')}
+      <div class="row"><button class="save">Guardar</button></div>
+    </div>`;
+
+  const box = card.querySelector('.compare');
+  const after = card.querySelector('.after');
+  const handle = card.querySelector('.handle');
+  const before = card.querySelector('.before');
+
+  // Match the frame to the taller of the two so neither gets letterboxed oddly,
+  // but never let a portrait photo push everything else off the screen.
+  const sizeBox = () => {
+    const w = box.clientWidth || 1;
+    const tallest = Math.min(it.ratio_before || 1, it.ratio_after || 1);
+    box.style.height = Math.round(
+      Math.min(w / tallest, window.innerHeight * 0.6)) + 'px';
+  };
+  before.complete ? sizeBox() : before.addEventListener('load', sizeBox, { once: true });
+  window.addEventListener('resize', sizeBox);
+
+  const move = clientX => {
+    const r = box.getBoundingClientRect();
+    const pct = Math.min(100, Math.max(0, ((clientX - r.left) / r.width) * 100));
+    after.style.clipPath = `inset(0 0 0 ${pct}%)`;
+    handle.style.left = pct + '%';
+  };
+  let dragging = false;
+  const start = e => { dragging = true; move((e.touches ? e.touches[0] : e).clientX); };
+  const drag = e => {
+    if (!dragging) return;
+    e.preventDefault();
+    move((e.touches ? e.touches[0] : e).clientX);
+  };
+  const end = () => { dragging = false; };
+  box.addEventListener('pointerdown', start);
+  box.addEventListener('pointermove', drag);
+  box.addEventListener('touchstart', start, { passive: true });
+  box.addEventListener('touchmove', drag, { passive: false });
+  window.addEventListener('pointerup', end);
+  window.addEventListener('touchend', end);
+
+  card.querySelector('.save').addEventListener('click', () => saveOne(it));
+  return card;
+}
+
+function render(list) {
+  items = list;
+  cards.innerHTML = '';
+  for (const it of list) cards.appendChild(makeCard(it));
+  hint.textContent = canShareFiles
+    ? 'Guardar abre la hoja de compartir del iPhone: elige «Guardar imagen».'
+    : 'También puedes mantener pulsada una foto para guardarla.';
+}
+
+async function fileFor(it) {
+  const res = await fetch(it.output);
+  const blob = await res.blob();
+  return new File([blob], it.out_name, { type: blob.type || 'image/jpeg' });
+}
+
+async function saveOne(it) {
+  try {
+    const file = await fileFor(it);
+    if (canShareFiles && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file] });
+      return;
+    }
+  } catch (e) {
+    if (e && e.name === 'AbortError') return;   // the user closed the sheet
+  }
+  const a = document.createElement('a');
+  a.href = it.output;
+  a.download = it.out_name;
+  a.click();
+}
+
+async function saveAll() {
+  const ok = items.filter(i => i.ok);
+  if (!ok.length) return;
+  if (canShareFiles) {
+    try {
+      setBusy(true, 'Preparando…');
+      const files = await Promise.all(ok.map(fileFor));
+      setBusy(false, `${ok.length} foto(s) listas`);
+      if (navigator.canShare({ files })) { await navigator.share({ files }); return; }
+    } catch (e) {
+      setBusy(false);
+      if (e && e.name === 'AbortError') return;
+    }
+  }
+  location.href = `/api/download/${job}`;
 }
 
 async function send(url, body) {
@@ -253,44 +360,44 @@ async function send(url, body) {
 async function upload(files) {
   const list = [...files];
   if (!list.length || busy) return;
-  setBusy(true, `Procesando ${list.length} foto(s)...`);
+  setBusy(true, `Procesando ${list.length} foto(s)…`);
   const fd = settings();
   for (const f of list) fd.append('photos', f);
   try {
     const data = await send('/api/upload', fd);
     job = data.job;
     render(data.items);
-    const extra = (data.rejected || []).length
-      ? ` (${data.rejected.length} archivo(s) no admitido(s))` : '';
-    setBusy(false, `${data.items.length} foto(s) listas${extra}.`);
-  } catch (e) {
-    setBusy(false, e.message);
-  }
+    const bad = (data.rejected || []).length;
+    setBusy(false, `${data.items.length} foto(s) listas` + (bad ? ` · ${bad} descartada(s)` : ''));
+  } catch (e) { setBusy(false, e.message); }
 }
 
 async function rerender() {
   if (!job || busy) return;
-  setBusy(true, 'Aplicando ajustes...');
+  setBusy(true, 'Aplicando…');
   try {
     const data = await send(`/api/rerender/${job}`, settings());
     render(data.items);
-    setBusy(false, 'Actualizado.');
+    setBusy(false, 'Actualizado');
   } catch (e) {
     setBusy(false, e.message);
     if (e.message.includes('caducado')) job = null;
   }
 }
 
-drop.addEventListener('click', () => picker.click());
 picker.addEventListener('change', () => { upload(picker.files); picker.value = ''; });
 ['dragenter', 'dragover'].forEach(ev =>
-  drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
+  pick.addEventListener(ev, e => { e.preventDefault(); pick.classList.add('over'); }));
 ['dragleave', 'drop'].forEach(ev =>
-  drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
-drop.addEventListener('drop', e => upload(e.dataTransfer.files));
+  pick.addEventListener(ev, e => { e.preventDefault(); pick.classList.remove('over'); }));
+pick.addEventListener('drop', e => upload(e.dataTransfer.files));
 
 applyBtn.addEventListener('click', rerender);
-zipBtn.addEventListener('click', () => { if (job) location.href = `/api/download/${job}`; });
+saveAllBtn.addEventListener('click', saveAll);
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(() => {});
+}
 </script>
 </body>
 </html>

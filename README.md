@@ -47,9 +47,50 @@ lo instalas, todo lo demás sigue funcionando con JPG y PNG.
 .venv/bin/python -m webapp.app
 ```
 
-Abre <http://127.0.0.1:5000>, arrastra las fotos y las verás antes y después.
-Puedes cambiar los ajustes y pulsar **Aplicar cambios** sin volver a subirlas, y
-descargarlo todo en un `.zip`. Las fotos no salen de tu equipo.
+Abre <http://127.0.0.1:5000>, arrastra las fotos y las verás antes y después con
+un comparador que se arrastra con el dedo o el ratón. Puedes cambiar los ajustes
+y pulsar **Aplicar cambios** sin volver a subirlas.
+
+En macOS el puerto 5000 lo ocupa AirPlay; usa `--port 8000`.
+
+## Uso desde el iPhone
+
+Arranca el servidor abriéndolo también a la red local:
+
+```bash
+.venv/bin/python -m webapp.app --phone
+```
+
+Imprime dos direcciones: la de este ordenador y la del móvil, del tipo
+`http://192.168.1.42:5000`. Escribe esa segunda en Safari, con el iPhone en la
+misma wifi. Las fotos van del móvil a tu ordenador y vuelven; no salen de tu
+casa.
+
+En Safari, **Compartir → Añadir a pantalla de inicio** lo deja como una app más,
+con su icono y a pantalla completa. El botón **Guardar** abre la hoja de
+compartir de iOS, donde eliges «Guardar imagen» para que vaya al carrete.
+
+El ordenador tiene que estar encendido y con el servidor abierto. Si prefieres
+una dirección fija que funcione desde cualquier sitio, mira la sección
+siguiente.
+
+## Publicarla en internet
+
+El repositorio trae un `Dockerfile` listo y un `render.yaml` para
+[Render](https://render.com): creas una cuenta, conectas el repositorio y
+detecta la configuración solo. El plan gratuito basta de sobra, aunque el
+servicio se duerme cuando no se usa y tarda unos segundos en despertar.
+
+Sirve cualquier hosting que acepte un contenedor:
+
+```bash
+docker build -t photofix .
+docker run -p 8000:8000 photofix
+```
+
+Ten en cuenta que así las fotos sí viajan a un servidor ajeno mientras se
+procesan. Se borran solas al cabo de una hora, pero si te importa la
+privacidad, la opción de la red local es la buena.
 
 ## Uso desde la terminal
 

@@ -1,0 +1,10 @@
+# One-click deploy on Render (render.com). Free tier is enough for a
+# few hundred photos a day; it sleeps when unused and takes a moment to wake.
+services:
+  - type: web
+    name: photofix
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /
+    autoDeploy: true

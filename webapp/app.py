@@ -10,14 +10,15 @@ the margin, look, adjust.
 
 from __future__ import annotations
 
-import atexit
 import io
+import os
+import re
 import shutil
 import tempfile
 import time
 import uuid
 import zipfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from flask import Flask, abort, jsonify, render_template, request, send_file
@@ -41,15 +42,21 @@ MAX_JOBS = 24
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
 
-ROOT = Path(tempfile.mkdtemp(prefix="photofix-"))
-atexit.register(lambda: shutil.rmtree(ROOT, ignore_errors=True))
+# A batch lives on disk under a shared root rather than in a dictionary in
+# memory. Under a real server there are several worker processes, and the one
+# that answers "re-render batch X" is rarely the one that received the upload,
+# so anything held in a process is invisible half the time.
+ROOT = Path(
+    os.environ.get("PHOTOFIX_WORKDIR") or Path(tempfile.gettempdir()) / "photofix-jobs"
+)
+ROOT.mkdir(parents=True, exist_ok=True)
+
+JOB_ID = re.compile(r"^[0-9a-f]{12}$")
 
 
 @dataclass
 class Job:
     id: str
-    created: float
-    originals: list[str] = field(default_factory=list)
 
     @property
     def dir(self) -> Path:
@@ -63,18 +70,42 @@ class Job:
     def out_dir(self) -> Path:
         return self.dir / "out"
 
+    @property
+    def originals(self) -> list[str]:
+        if not self.in_dir.is_dir():
+            return []
+        return sorted(p.name for p in self.in_dir.iterdir() if p.is_file())
 
-JOBS: dict[str, Job] = {}
+    def touch(self) -> None:
+        self.dir.touch(exist_ok=True)
+
+
+def find_job(job_id: str) -> Job | None:
+    """Look a batch up by id, rejecting anything that is not one of ours."""
+    if not JOB_ID.match(job_id or ""):
+        return None
+    job = Job(job_id)
+    return job if job.in_dir.is_dir() else None
 
 
 def _sweep() -> None:
-    """Drop jobs that are old or simply too many to keep around."""
+    """Delete batches that are past their hour, and the oldest beyond the cap."""
     now = time.time()
-    for jid in [j for j, job in JOBS.items() if now - job.created > JOB_LIFETIME_S]:
-        shutil.rmtree(JOBS.pop(jid).dir, ignore_errors=True)
-    while len(JOBS) > MAX_JOBS:
-        oldest = min(JOBS.values(), key=lambda j: j.created)
-        shutil.rmtree(JOBS.pop(oldest.id).dir, ignore_errors=True)
+    dirs = [d for d in ROOT.iterdir() if d.is_dir()] if ROOT.is_dir() else []
+    kept = []
+    for d in dirs:
+        try:
+            age = now - d.stat().st_mtime
+        except OSError:
+            continue
+        if age > JOB_LIFETIME_S:
+            shutil.rmtree(d, ignore_errors=True)
+        else:
+            kept.append(d)
+
+    kept.sort(key=lambda d: d.stat().st_mtime, reverse=True)
+    for d in kept[MAX_JOBS:]:
+        shutil.rmtree(d, ignore_errors=True)
 
 
 def _config_from_form(form) -> Config:
@@ -150,6 +181,10 @@ def _render(job: Job, cfg: Config) -> list[dict]:
             removed=max(0, rep.objects_found - rep.objects_kept),
             detected=rep.confident,
             ms=round(rep.elapsed_ms),
+            # The before/after slider sizes its frame from these, so neither
+            # picture ends up letterboxed inside the other's shape.
+            ratio_before=round(rep.input_size[0] / max(rep.input_size[1], 1), 4),
+            ratio_after=round(rep.output_size[0] / max(rep.output_size[1], 1), 4),
         )
         items.append(entry)
     return items
@@ -165,6 +200,49 @@ def index():
     )
 
 
+@app.get("/manifest.webmanifest")
+def manifest():
+    """Lets iOS "Añadir a pantalla de inicio" open this like an app."""
+    return jsonify({
+        "name": "photofix",
+        "short_name": "photofix",
+        "description": "Fotos de producto rectas y recortadas, listas para publicar",
+        "start_url": "/",
+        "display": "standalone",
+        "background_color": "#f6f5f3",
+        "theme_color": "#2f6f4e",
+        "lang": "es",
+        "icons": [
+            {"src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png"},
+            {"src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png",
+             "purpose": "any maskable"},
+        ],
+    })
+
+
+@app.get("/sw.js")
+def service_worker():
+    """Served from the root so it can control the whole site.
+
+    Deliberately thin: the photos live on the server, so there is nothing
+    useful to cache. Its only job is to satisfy the installability check and
+    to show a readable message when the phone is off the network.
+    """
+    js = (
+        "self.addEventListener('install', e => self.skipWaiting());\n"
+        "self.addEventListener('activate', e => e.waitUntil(clients.claim()));\n"
+        "self.addEventListener('fetch', e => {\n"
+        "  if (e.request.mode !== 'navigate') return;\n"
+        "  e.respondWith(fetch(e.request).catch(() => new Response(\n"
+        "    '<meta charset=utf-8><p style=\"font:16px system-ui;padding:24px\">"
+        "No hay conexión con photofix. Comprueba que el ordenador sigue "
+        "encendido y en la misma wifi.</p>',\n"
+        "    { headers: { 'Content-Type': 'text/html; charset=utf-8' } })));\n"
+        "});\n"
+    )
+    return app.response_class(js, mimetype="application/javascript")
+
+
 @app.post("/api/upload")
 def upload():
     _sweep()
@@ -172,10 +250,11 @@ def upload():
     if not files:
         return jsonify(error="No se ha recibido ninguna foto."), 400
 
-    job = Job(id=uuid.uuid4().hex[:12], created=time.time())
+    job = Job(uuid.uuid4().hex[:12])
     job.in_dir.mkdir(parents=True, exist_ok=True)
 
-    rejected = []
+    rejected: list[str] = []
+    saved = 0
     for f in files:
         name = secure_filename(f.filename or "")
         if not name or not io_utils.is_supported(name):
@@ -187,33 +266,33 @@ def upload():
             target = job.in_dir / f"{Path(name).stem}-{n}{Path(name).suffix}"
             n += 1
         f.save(target)
-        job.originals.append(target.name)
+        saved += 1
 
-    if not job.originals:
+    if not saved:
         shutil.rmtree(job.dir, ignore_errors=True)
         return jsonify(
             error="Ninguno de esos archivos es una imagen que se pueda leer."
         ), 400
 
-    JOBS[job.id] = job
+    job.touch()
     items = _render(job, _config_from_form(request.form))
     return jsonify(job=job.id, items=items, rejected=rejected)
 
 
 @app.post("/api/rerender/<job_id>")
 def rerender(job_id: str):
-    job = JOBS.get(job_id)
+    job = find_job(job_id)
     if job is None:
         return jsonify(
             error="Ese lote ha caducado. Vuelve a subir las fotos."
         ), 404
-    job.created = time.time()
+    job.touch()
     return jsonify(job=job.id, items=_render(job, _config_from_form(request.form)))
 
 
 @app.get("/file/<job_id>/<kind>/<path:name>")
 def serve(job_id: str, kind: str, name: str):
-    job = JOBS.get(job_id)
+    job = find_job(job_id)
     if job is None or kind not in ("in", "out"):
         abort(404)
     base = (job.in_dir if kind == "in" else job.out_dir).resolve()
@@ -230,7 +309,7 @@ def serve(job_id: str, kind: str, name: str):
 
 @app.get("/api/download/<job_id>")
 def download(job_id: str):
-    job = JOBS.get(job_id)
+    job = find_job(job_id)
     if job is None or not job.out_dir.exists():
         abort(404)
     buf = io.BytesIO()
@@ -250,16 +329,55 @@ def too_large(_):
     ), 413
 
 
+def lan_address() -> str | None:
+    """This machine's address on the local network.
+
+    Opening a UDP socket towards an outside address makes the OS pick the
+    interface it would really route through, which is the one the phone can
+    reach. Nothing is actually sent.
+    """
+    import socket
+
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("192.0.2.1", 9))     # reserved, never routed anywhere
+        return s.getsockname()[0]
+    except OSError:
+        return None
+    finally:
+        s.close()
+
+
 def main() -> None:
     import argparse
 
     ap = argparse.ArgumentParser(description="photofix web interface")
-    ap.add_argument("--host", default="127.0.0.1")
+    ap.add_argument("--host", default=None,
+                    help="address to listen on (default: this machine only)")
     ap.add_argument("--port", type=int, default=5000)
+    ap.add_argument("--phone", action="store_true",
+                    help="also accept connections from the local network, so a "
+                         "phone on the same wifi can use it")
     ap.add_argument("--debug", action="store_true")
     a = ap.parse_args()
-    print(f"photofix {__version__} -- open http://{a.host}:{a.port}")
-    app.run(host=a.host, port=a.port, debug=a.debug)
+
+    host = a.host or ("0.0.0.0" if a.phone else "127.0.0.1")
+    _sweep()        # clear out anything left behind by a previous session
+
+    print(f"\n  photofix {__version__}")
+    print(f"  En este ordenador:  http://127.0.0.1:{a.port}")
+    if a.phone:
+        ip = lan_address()
+        if ip:
+            print(f"  En el móvil:        http://{ip}:{a.port}")
+            print("  (el móvil tiene que estar en la misma wifi)")
+        else:
+            print("  No se ha podido averiguar la IP de esta red.")
+    else:
+        print("  Para abrirlo en el móvil, añade  --phone")
+    print("\n  Ctrl+C para parar.\n")
+
+    app.run(host=host, port=a.port, debug=a.debug)
 
 
 if __name__ == "__main__":

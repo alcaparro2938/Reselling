@@ -11,3 +11,4 @@ Flask>=3.0
 
 # Tests
 pytest>=7.4
+gunicorn>=21.2   # only needed when hosting it
