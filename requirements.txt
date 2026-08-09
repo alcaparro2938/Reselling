@@ -1,0 +1,13 @@
+# Core pipeline
+opencv-python-headless>=4.8
+numpy>=1.24
+Pillow>=10.0
+
+# iPhone HEIC/HEIF support (optional, but recommended)
+pillow-heif>=0.13
+
+# Web interface
+Flask>=3.0
+
+# Tests
+pytest>=7.4

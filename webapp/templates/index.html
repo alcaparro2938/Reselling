@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>photofix &mdash; fotos de producto listas para publicar</title>
+<style>
+  :root {
+    --bg: #f7f6f4;
+    --card: #ffffff;
+    --ink: #1c1b19;
+    --muted: #6d6a65;
+    --line: #e2ded8;
+    --accent: #2f6f4e;
+    --accent-soft: #e8f1ec;
+    --warn: #8a5a20;
+    --radius: 12px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17181a; --card: #1f2124; --ink: #ececea; --muted: #a2a09b;
+      --line: #33363a; --accent: #7dc79f; --accent-soft: #22302a; --warn: #d6a860;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    padding: 26px 24px 18px; border-bottom: 1px solid var(--line);
+    background: var(--card);
+  }
+  header h1 { margin: 0; font-size: 20px; letter-spacing: -0.01em; }
+  header p { margin: 6px 0 0; color: var(--muted); font-size: 14px; max-width: 62ch; }
+  main { max-width: 1180px; margin: 0 auto; padding: 24px; }
+
+  #drop {
+    border: 2px dashed var(--line); border-radius: var(--radius);
+    padding: 44px 20px; text-align: center; background: var(--card);
+    cursor: pointer; transition: border-color .15s, background .15s;
+  }
+  #drop.over { border-color: var(--accent); background: var(--accent-soft); }
+  #drop strong { display: block; font-size: 17px; margin-bottom: 4px; }
+  #drop span { color: var(--muted); font-size: 14px; }
+
+  .panel {
+    margin-top: 20px; background: var(--card); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 18px 20px;
+  }
+  .panel h2 { margin: 0 0 14px; font-size: 14px; text-transform: uppercase;
+              letter-spacing: .07em; color: var(--muted); }
+  .controls { display: grid; gap: 16px 22px;
+              grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 5px; }
+  select, input[type=number] {
+    width: 100%; padding: 7px 9px; border: 1px solid var(--line);
+    border-radius: 8px; background: var(--bg); color: var(--ink); font-size: 14px;
+  }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  .check { display: flex; align-items: center; gap: 8px; margin-top: 22px; }
+  .check input { accent-color: var(--accent); width: 16px; height: 16px; }
+  .check label { margin: 0; color: var(--ink); font-size: 14px; }
+
+  .actions { margin-top: 18px; display: flex; gap: 10px; flex-wrap: wrap;
+             align-items: center; }
+  button {
+    font: inherit; font-weight: 550; padding: 9px 16px; border-radius: 9px;
+    border: 1px solid var(--accent); background: var(--accent); color: #fff;
+    cursor: pointer;
+  }
+  button.ghost { background: transparent; color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  #status { color: var(--muted); font-size: 14px; }
+
+  .grid { margin-top: 22px; display: grid; gap: 18px;
+          grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); }
+  .card { background: var(--card); border: 1px solid var(--line);
+          border-radius: var(--radius); overflow: hidden; }
+  .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 1px;
+          background: var(--line); }
+  .shot { background: var(--bg); position: relative; }
+  .shot img { display: block; width: 100%; height: 230px; object-fit: contain; }
+  .shot b { position: absolute; top: 7px; left: 7px; font-size: 10px;
+            letter-spacing: .09em; text-transform: uppercase; font-weight: 600;
+            background: rgba(0,0,0,.62); color: #fff; padding: 2px 7px;
+            border-radius: 5px; }
+  .meta { padding: 12px 14px 14px; }
+  .meta .name { font-weight: 600; font-size: 14px; word-break: break-all; }
+  .meta .sum { color: var(--muted); font-size: 13px; margin-top: 3px; }
+  .meta .note { color: var(--warn); font-size: 12.5px; margin-top: 5px; }
+  .meta .err { color: #b5462f; font-size: 13px; margin-top: 5px; }
+  .tags { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
+  .tag { font-size: 11.5px; padding: 2px 8px; border-radius: 20px;
+         background: var(--accent-soft); color: var(--accent); font-weight: 550; }
+  footer { color: var(--muted); font-size: 12.5px; text-align: center;
+           padding: 26px 16px 40px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>photofix</h1>
+  <p>Suelta las fotos del producto. Se enderezan, se recorta lo que no interesa
+     y salen centradas y listas para publicar. El fondo se conserva.</p>
+</header>
+
+<main>
+  <div id="drop">
+    <strong>Arrastra tus fotos aqu&iacute;</strong>
+    <span>o pulsa para elegirlas &mdash; JPG, PNG, WEBP y HEIC del iPhone</span>
+    <input id="picker" type="file" multiple accept="image/*,.heic,.heif" hidden>
+  </div>
+
+  <section class="panel">
+    <h2>Ajustes</h2>
+    <div class="controls">
+      <div>
+        <label for="ratio">Formato</label>
+        <select id="ratio">
+          {% for r in ratios %}<option value="{{ r }}">{{ r }}</option>{% endfor %}
+        </select>
+      </div>
+      <div>
+        <label for="fill">Tama&ntilde;o del producto: <span id="fillv">86</span>%</label>
+        <input id="fill" type="range" min="40" max="100" value="86">
+      </div>
+      <div>
+        <label for="enhance">Retoque</label>
+        <select id="enhance">
+          {% for p in presets %}
+          <option value="{{ p }}" {% if p == 'light' %}selected{% endif %}>{{ p }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label for="max_side">Lado mayor (px)</label>
+        <input id="max_side" type="number" min="400" max="6000" step="100" value="2000">
+      </div>
+      <div>
+        <label for="format">Formato de salida</label>
+        <select id="format">
+          <option value="jpg">JPG</option>
+          <option value="png">PNG</option>
+          <option value="webp">WEBP</option>
+        </select>
+      </div>
+      <div class="check">
+        <input id="straighten" type="checkbox" checked>
+        <label for="straighten">Enderezar</label>
+      </div>
+      <div class="check">
+        <input id="drop_distractors" type="checkbox" checked>
+        <label for="drop_distractors">Quitar objetos ajenos</label>
+      </div>
+      <div class="check">
+        <input id="pad_to_ratio" type="checkbox">
+        <label for="pad_to_ratio">Forzar el formato</label>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button id="apply" disabled>Aplicar cambios</button>
+      <button id="zip" class="ghost" disabled>Descargar todo (.zip)</button>
+      <span id="status"></span>
+    </div>
+  </section>
+
+  <div class="grid" id="grid"></div>
+</main>
+
+<footer>photofix {{ version }} &mdash; todo se procesa en tu propio equipo.</footer>
+
+<script>
+const drop = document.getElementById('drop');
+const picker = document.getElementById('picker');
+const grid = document.getElementById('grid');
+const statusEl = document.getElementById('status');
+const applyBtn = document.getElementById('apply');
+const zipBtn = document.getElementById('zip');
+const fill = document.getElementById('fill');
+const fillv = document.getElementById('fillv');
+let job = null;
+let busy = false;
+
+fill.addEventListener('input', () => fillv.textContent = fill.value);
+
+function settings() {
+  const fd = new FormData();
+  fd.append('ratio', document.getElementById('ratio').value);
+  fd.append('fill', (parseInt(fill.value, 10) / 100).toFixed(2));
+  fd.append('enhance', document.getElementById('enhance').value);
+  fd.append('max_side', document.getElementById('max_side').value);
+  fd.append('format', document.getElementById('format').value);
+  fd.append('straighten', document.getElementById('straighten').checked);
+  fd.append('drop_distractors', document.getElementById('drop_distractors').checked);
+  fd.append('pad_to_ratio', document.getElementById('pad_to_ratio').checked);
+  return fd;
+}
+
+function setBusy(on, message) {
+  busy = on;
+  applyBtn.disabled = on || !job;
+  zipBtn.disabled = on || !job;
+  statusEl.textContent = message || '';
+}
+
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+
+function render(items) {
+  grid.innerHTML = '';
+  for (const it of items) {
+    const card = document.createElement('div');
+    card.className = 'card';
+    if (!it.ok) {
+      card.innerHTML = `<div class="meta"><div class="name">${esc(it.name)}</div>
+        <div class="err">No se pudo procesar: ${esc(it.error || '')}</div></div>`;
+      grid.appendChild(card);
+      continue;
+    }
+    const tags = [];
+    if (Math.abs(it.rotated) >= 0.01) tags.push(`girada ${it.rotated > 0 ? '+' : ''}${it.rotated}&deg;`);
+    if (it.removed > 0) tags.push(`${it.removed} objeto(s) fuera`);
+    tags.push(it.size);
+    if (!it.detected) tags.push('producto no detectado');
+
+    card.innerHTML = `
+      <div class="pair">
+        <div class="shot"><b>antes</b><img loading="lazy" src="${it.original}" alt=""></div>
+        <div class="shot"><b>despu&eacute;s</b><img loading="lazy" src="${it.output}" alt=""></div>
+      </div>
+      <div class="meta">
+        <div class="name">${esc(it.out_name)}</div>
+        <div class="sum">${esc(it.summary)}</div>
+        <div class="tags">${tags.map(t => `<span class="tag">${t}</span>`).join('')}</div>
+        ${(it.warnings || []).map(w => `<div class="note">${esc(w)}</div>`).join('')}
+      </div>`;
+    grid.appendChild(card);
+  }
+}
+
+async function send(url, body) {
+  const res = await fetch(url, { method: 'POST', body });
+  let data;
+  try { data = await res.json(); }
+  catch { throw new Error('El servidor no respondió correctamente.'); }
+  if (!res.ok) throw new Error(data.error || 'Error inesperado.');
+  return data;
+}
+
+async function upload(files) {
+  const list = [...files];
+  if (!list.length || busy) return;
+  setBusy(true, `Procesando ${list.length} foto(s)...`);
+  const fd = settings();
+  for (const f of list) fd.append('photos', f);
+  try {
+    const data = await send('/api/upload', fd);
+    job = data.job;
+    render(data.items);
+    const extra = (data.rejected || []).length
+      ? ` (${data.rejected.length} archivo(s) no admitido(s))` : '';
+    setBusy(false, `${data.items.length} foto(s) listas${extra}.`);
+  } catch (e) {
+    setBusy(false, e.message);
+  }
+}
+
+async function rerender() {
+  if (!job || busy) return;
+  setBusy(true, 'Aplicando ajustes...');
+  try {
+    const data = await send(`/api/rerender/${job}`, settings());
+    render(data.items);
+    setBusy(false, 'Actualizado.');
+  } catch (e) {
+    setBusy(false, e.message);
+    if (e.message.includes('caducado')) job = null;
+  }
+}
+
+drop.addEventListener('click', () => picker.click());
+picker.addEventListener('change', () => { upload(picker.files); picker.value = ''; });
+['dragenter', 'dragover'].forEach(ev =>
+  drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
+['dragleave', 'drop'].forEach(ev =>
+  drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
+drop.addEventListener('drop', e => upload(e.dataTransfer.files));
+
+applyBtn.addEventListener('click', rerender);
+zipBtn.addEventListener('click', () => { if (job) location.href = `/api/download/${job}`; });
+</script>
+</body>
+</html>

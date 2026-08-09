@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "photofix"
+version = "1.0.0"
+description = "Straighten and reframe product photos for marketplace listings"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "opencv-python-headless>=4.8",
+    "numpy>=1.24",
+    "Pillow>=10.0",
+]
+
+[project.optional-dependencies]
+heic = ["pillow-heif>=0.13"]
+web = ["Flask>=3.0"]
+dev = ["pytest>=7.4"]
+
+[project.scripts]
+photofix = "photofix.cli:main"
+
+[tool.setuptools]
+packages = ["photofix", "webapp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
