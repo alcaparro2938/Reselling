@@ -28,6 +28,20 @@ NOTE_TEXT: dict[str, str] = {
         "Se ha ampliado el encuadre un {percent}% reflejando la superficie.",
     "pad_blocked":
         "No se puede ampliar hasta {target} sin reflejar el propio producto.",
+    "background_replaced":
+        "La foto no ten\u00eda una superficie aprovechable, as\u00ed que el producto "
+        "se ha recortado y colocado sobre madera.",
+    "hand_removed":
+        "Se ha quitado la mano que lo sujetaba.",
+    "hand_covers_product":
+        "Ojo: la mano tapaba un {percent}% del producto. Esa parte se ha "
+        "reconstruido y no es real \u2014 mejor repetir la foto con el m\u00f3vil "
+        "apoyado.",
+    "cutout_unavailable":
+        "No se ha podido cargar el recortador, as\u00ed que se ha dejado el fondo "
+        "original.",
+    "cutout_unsure":
+        "El recorte no ha salido fiable, as\u00ed que se ha dejado el fondo original.",
     "pad_short":
         "No se ha llegado a {target}; se ha quedado en {reached}.",
 }

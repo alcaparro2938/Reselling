@@ -100,6 +100,34 @@ def _candidate_ratios(cfg: Config, original_ratio: float, subject_ratio: float) 
     return [fixed] if fixed else list(cfg.ratios)
 
 
+def choose_canvas(
+    sw: int, sh: int, cfg: Config, original_ratio: float
+) -> tuple[int, int, float]:
+    """Size of a fresh frame built around a subject of sw x sh.
+
+    Used when the background is being replaced, where nothing constrains the
+    frame: the surface is generated to whatever size suits the product, so the
+    margin and the aspect ratio always come out exactly as asked.
+    """
+    fill = float(np.clip(cfg.fill, 0.30, 1.0))
+    mode = (cfg.ratio or "auto").strip().lower()
+
+    best: tuple[float, int, int, float] | None = None
+    for r in _candidate_ratios(cfg, original_ratio, sw / max(sh, 1)):
+        if mode == "free":
+            cw, ch = sw / fill, sh / fill
+            r = cw / ch
+        else:
+            cw = max(sw / fill, r * (sh / fill))
+            ch = cw / r
+        waste = cw * ch - sw * sh
+        if best is None or waste < best[0]:
+            best = (waste, max(1, int(round(cw))), max(1, int(round(ch))), r)
+
+    assert best is not None
+    return best[1], best[2], best[3]
+
+
 def plan_crop(
     frame_shape: tuple[int, int],
     subject: tuple[int, int, int, int],

@@ -60,6 +60,12 @@ JOB_ID = re.compile(r"^[0-9a-f]{12}$")
 # happen concurrently on the other threads.
 CPU_SLOTS = threading.Semaphore(int(os.environ.get("PHOTOFIX_CONCURRENCY", "1")))
 
+# Photos are bounded on the way in. A 12 megapixel iPhone photo costs about
+# 120 MB just to decode, before any work happens, and the export is 2000 pixels
+# across at most -- so nothing above this is ever seen by the person looking at
+# the result. Raise it where there is memory to spare.
+MAX_INPUT = int(os.environ.get("PHOTOFIX_MAX_INPUT", "2600"))
+
 
 @dataclass
 class Job:
@@ -136,6 +142,10 @@ def _config_from_form(form) -> Config:
     if enhance not in PRESETS:
         enhance = "light"
 
+    bg = form.get("background", "auto")
+    if bg not in ("", "auto", "wood"):
+        bg = "auto"
+
     fmt = form.get("format", "jpg")
     if fmt not in ("jpg", "png", "webp"):
         fmt = "jpg"
@@ -148,6 +158,8 @@ def _config_from_form(form) -> Config:
         fill=min(max(num("fill", 0.86), 0.3), 1.0),
         center_bias_y=min(max(num("bias_y", 0.0), -0.3), 0.3),
         drop_distractors=flag("drop_distractors", True),
+        background=bg,
+        remove_hands=flag("remove_hands", True),
         enhance=enhance,
         white_balance=flag("white_balance", False),
         max_side=int(min(max(num("max_side", 2000), 200), 6000)),
@@ -167,7 +179,7 @@ def _render(job: Job, cfg: Config) -> list[dict]:
         entry: dict = {"name": name, "original": f"/file/{job.id}/in/{name}"}
         try:
             with CPU_SLOTS:
-                result = process(io_utils.load_bgr(src), cfg)
+                result = process(io_utils.load_bgr(src, MAX_INPUT), cfg)
         except Exception as exc:
             entry.update(ok=False, error=str(exc))
             items.append(entry)

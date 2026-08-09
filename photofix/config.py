@@ -73,6 +73,24 @@ class Config:
     drop_distractors: bool = True
     """Discard objects that are cut off by the frame edge or far too small."""
 
+    background: str = ""
+    """Empty keeps the surface the photo was taken on -- the default, and the
+    right answer when the product is already lying on a decent surface. Set to
+    "wood" for the built-in generated floor, or to the path of a photo of your
+    own surface. Anything else in the frame, including a hand, disappears."""
+
+    remove_hands: bool = True
+    """When replacing the background, drop skin-coloured regions so a product
+    held up in a hand comes out on its own. What a finger covers *on top of*
+    the product cannot be recovered, and is reported rather than invented."""
+
+    shadow: bool = True
+    """Lay a soft contact shadow under the product on the new surface. Without
+    one it reads as a sticker."""
+
+    allow_model_download: bool = True
+    """The cut-out needs a 4.5 MB model file, fetched once and cached."""
+
     max_filled: float = 0.015
     """How much of the crop may fall outside the original photo before the
     framer starts sacrificing margin. Rotating always exposes wedges at the

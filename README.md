@@ -2,11 +2,44 @@
 
 Deja las fotos de producto listas para publicar. Le das una foto tal cual sale
 del móvil —torcida, con la mesa o una taza asomando por una esquina— y devuelve
-el producto recto, centrado y con el encuadre limpio. El fondo se conserva: la
-madera del suelo sigue siendo la madera del suelo.
+el producto recto, centrado y con el encuadre limpio.
+
+Por defecto respeta la superficie sobre la que hiciste la foto: la madera del
+suelo sigue siendo la madera del suelo. Y cuando no hay superficie que respetar
+—el móvil en la mano, una habitación de fondo— recorta el producto y lo coloca
+sobre una.
 
 Pensado para vender móviles, sobre todo iPhone, pero funciona con cualquier
-producto apoyado sobre una superficie lisa y fotografiado desde arriba.
+producto fotografiado desde arriba.
+
+## Cambiar el fondo y quitar la mano
+
+Por defecto se conserva la superficie de la foto. Con `--background auto` (o
+«Automático» en la web) se decide por foto:
+
+- Si el producto ya está apoyado en una superficie lisa y uniforme, **se
+  conserva**. Sustituir una madera real por una generada solo resta.
+- Si no hay superficie aprovechable —el móvil en la mano, una habitación de
+  fondo— **se recorta el producto y se coloca sobre madera**, centrado, recto y
+  con su sombra.
+
+La decisión no es un capricho: mide la dispersión de color del borde del
+encuadre. En las fotos cenitales sale alrededor de 0,6; en una foto con el móvil
+en alto, 2,4. El corte está en 1,0.
+
+Con `--background wood` se sustituye siempre, y pasando la ruta de una foto tuya
+se usa esa superficie en lugar de la generada.
+
+**La mano.** La que queda *detrás* del producto desaparece limpiamente. Los
+dedos que se cierran *por delante* son otra cosa: se recupera la silueta del
+producto para que no quede mordida, y lo que el dedo tapaba se reconstruye a
+partir de lo que hay alrededor. Eso son píxeles inventados, así que te dice qué
+porcentaje del producto ha tenido que rellenar. Si es más de un 5% te avisa de
+que esa foto se hace mejor con el móvil apoyado — un arañazo debajo de un dedo
+no aparecería en la foto, y eso es un problema para quien compra.
+
+El recorte usa un modelo de 4,5 MB que se descarga una vez y se guarda en
+caché. Sin él, se conserva el fondo original y se dice por qué.
 
 ## Qué hace, en orden
 
@@ -101,8 +134,16 @@ docker build -t photofix .
 docker run -p 8000:8000 photofix
 ```
 
-Variables que entiende: `PORT`, `PHOTOFIX_WORKDIR` (dónde guarda los lotes) y
-`PHOTOFIX_CONCURRENCY` (fotos a la vez; súbela a 2 o 3 si le das más memoria).
+Variables que entiende: `PORT`, `PHOTOFIX_WORKDIR` (dónde guarda los lotes),
+`PHOTOFIX_CONCURRENCY` (fotos a la vez), `PHOTOFIX_MAX_INPUT` (resolución máxima
+de entrada) y `PHOTOFIX_MODEL_SIZE` (entrada de la red de recorte).
+
+Sobre la memoria, que es lo que limita el plan gratuito de 512 MB: cambiar el
+fondo cuesta bastante más que recortar, porque interviene la red neuronal.
+Con los valores por defecto —entrada limitada a 2600 px y red a 256— una foto
+de 12 MP llega a unos 470 MB y sale a 1876 px. Si le das más memoria, sube
+`PHOTOFIX_MAX_INPUT` a 3000 y `PHOTOFIX_MODEL_SIZE` a 320 para la calidad
+completa.
 
 Ten en cuenta que así las fotos sí viajan a un servidor ajeno mientras se
 procesan. Se borran solas al cabo de una hora, pero si te importa la
@@ -131,6 +172,8 @@ Opciones que más se usan:
 | `--keep-extras` | No descartar los objetos secundarios |
 | `--no-straighten` | Recortar sin girar |
 | `--max-side` | Lado mayor del resultado, `2000` por defecto |
+| `--background` | `auto`, `wood`, o la ruta de una foto de tu superficie |
+| `--keep-hands` | No intentar quitar la mano |
 | `--debug` | Escribe también el análisis dibujado sobre la foto |
 
 Un formato fijo no siempre cabe: una foto vertical de un móvil no tiene suelo
@@ -157,7 +200,9 @@ result.report.warnings          # avisos con código estable y texto
 photofix/
   config.py     todos los ajustes en un sitio
   io_utils.py   lectura y escritura, incluido HEIC
-  segment.py    localiza el producto y separa lo que sobra
+  segment.py    localiza el producto contra su propia superficie
+  cutout.py     lo recorta de cualquier fondo, y quita la mano
+  background.py genera la superficie nueva y monta el producto encima
   geometry.py   mide la inclinación y gira sin perder nada
   framing.py    decide el recorte: forma, margen y posición
   enhance.py    el retoque final
@@ -198,3 +243,7 @@ Para verlas:
   referencia.
 - Los objetos que toquen el borde del encuadre se consideran ajenos. Si el
   producto llega hasta el borde, usa `--keep-extras`.
+- La mano se detecta por color de piel. Un producto de color carne o madera muy
+  clara puede confundirla; si el recorte se comería casi todo, no toca nada.
+- Lo que un dedo tapa se reconstruye inventando píxeles. Sirve para que la foto
+  no quede con agujeros, no para ocultar el estado del producto.

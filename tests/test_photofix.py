@@ -269,3 +269,115 @@ def test_non_fixed_ratios_resolve_to_nothing(text):
 def test_a_nonsense_ratio_is_rejected():
     with pytest.raises(ValueError):
         resolve_ratio("banana")
+
+
+# --------------------------------------------------------------------------
+# replacing the surface
+# --------------------------------------------------------------------------
+from photofix import background, cutout                                # noqa: E402
+from photofix.segment import segment                                   # noqa: E402
+
+needs_model = pytest.mark.skipif(
+    not cutout.model_available(download=True),
+    reason="the cut-out model could not be fetched",
+)
+
+
+def test_generated_surface_is_the_size_asked_for():
+    s = background.surface(300, 500)
+    assert s.shape == (300, 500, 3)
+
+
+def test_a_photo_of_your_own_surface_tiles_to_any_size(tmp_path):
+    swatch = background.wood_surface(120, 90)
+    path = tmp_path / "floor.jpg"
+    io_utils.save(swatch, path)
+    s = background.surface(700, 400, str(path))
+    assert s.shape == (700, 400, 3)
+
+
+def test_a_missing_surface_photo_is_an_error():
+    with pytest.raises(FileNotFoundError):
+        background.surface(50, 50, "/nope/not/here.jpg")
+
+
+def test_the_shadow_falls_outside_the_product_not_on_it():
+    """It hugs the object: the blur radius scales with the frame, so on a small
+    test image the shadow only reaches a few pixels past the edge."""
+    alpha = np.zeros((200, 200), np.uint8)
+    alpha[60:140, 60:140] = 255
+    s = background.contact_shadow(alpha)
+    assert s[100, 100] == pytest.approx(0.0, abs=1e-6), "none under the object"
+    assert s[141:150, 100].max() > 0.02, "some just below it"
+    assert s[190:, 100].max() < 0.01, "none far away"
+    # Offset down and to the right, as in the reference photos.
+    assert s[141:150, 100].max() > s[50:59, 100].max()
+
+
+def test_a_flat_lay_keeps_its_own_surface(scenes):
+    """Replacing a perfectly good wooden floor with a synthetic one only loses
+    detail, so 'auto' should leave these alone."""
+    for name in ("single_phone", "phone_and_cable", "full_kit"):
+        image, _ = scenes[name]
+        assert segment(image, Config()).uniform_surface, name
+
+
+def test_a_photo_with_no_usable_surface_is_spotted(scenes):
+    image, _ = scenes["in_hand"]
+    assert not segment(image, Config()).uniform_surface
+
+
+@needs_model
+def test_auto_replaces_only_the_background_that_needs_it(scenes):
+    replaced = {}
+    for name in ("single_phone", "in_hand"):
+        image, _ = scenes[name]
+        result = process(image, Config(background="auto"))
+        replaced[name] = "background_replaced" in _codes(result)
+    assert replaced == {"single_phone": False, "in_hand": True}
+
+
+@needs_model
+def test_the_hand_is_removed(scenes):
+    image, _ = scenes["in_hand"]
+    result = process(image, Config(background="wood"))
+    assert "background_replaced" in _codes(result)
+    assert "hand_removed" in _codes(result)
+
+
+@needs_model
+def test_a_hand_over_the_product_is_reported_not_hidden(scenes):
+    """What a finger covers cannot be recovered. The tool rebuilds the outline
+    so the result is not full of holes, and says how much it had to invent."""
+    image, _ = scenes["in_hand"]
+    result = process(image, Config(background="wood"))
+    assert "hand_covers_product" in _codes(result)
+
+
+@needs_model
+def test_skin_survives_on_a_product_that_is_merely_warm_coloured():
+    """A beige product must not be mistaken for a hand and deleted."""
+    beige = np.full((900, 700, 3), 40, np.uint8)
+    beige[200:700, 220:480] = (150, 176, 205)      # a skin-toned rectangle
+    result = process(beige, Config(background="wood"))
+    assert result.image.size > 0
+
+
+@needs_model
+def test_a_replaced_surface_hits_the_exact_ratio(scenes):
+    """With a generated surface nothing constrains the frame, so a fixed ratio
+    is always achievable -- unlike when cropping inside the original photo."""
+    image, _ = scenes["in_hand"]
+    for alias in ("1:1", "4:5", "3:2"):
+        out = process(image, Config(background="wood", ratio=alias)).image
+        got = out.shape[1] / out.shape[0]
+        assert abs(got - RATIO_ALIASES[alias]) < 0.02, f"{alias}: got {got:.3f}"
+
+
+def test_without_the_model_the_original_background_is_kept(scenes, tmp_path, monkeypatch):
+    monkeypatch.setenv("PHOTOFIX_MODEL_DIR", str(tmp_path / "empty"))
+    monkeypatch.setattr(cutout, "_NET", None)
+    image, _ = scenes["single_phone"]
+    result = process(image, Config(background="wood", allow_model_download=False))
+    assert "cutout_unavailable" in _codes(result)
+    assert result.image.size > 0

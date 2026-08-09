@@ -167,6 +167,17 @@
         <input id="fill" type="range" min="40" max="100" value="86">
       </div>
       <div>
+        <label for="background">Fondo</label>
+        <select id="background">
+          <option value="auto">Automático (cambiar solo si hace falta)</option>
+          <option value="wood">Siempre madera</option>
+          <option value="">Conservar el original</option>
+        </select>
+      </div>
+      <div class="switch">
+        <span>Quitar la mano</span><input id="remove_hands" type="checkbox" checked>
+      </div>
+      <div>
         <label for="enhance">Retoque</label>
         <select id="enhance">
           {% for p in presets %}
@@ -218,6 +229,8 @@ function settings() {
   fd.append('ratio', $('ratio').value);
   fd.append('fill', (parseInt(fill.value, 10) / 100).toFixed(2));
   fd.append('enhance', $('enhance').value);
+  fd.append('background', $('background').value);
+  fd.append('remove_hands', $('remove_hands').checked);
   fd.append('max_side', $('max_side').value);
   fd.append('straighten', $('straighten').checked);
   fd.append('drop_distractors', $('drop_distractors').checked);

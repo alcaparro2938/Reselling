@@ -28,12 +28,17 @@ def is_supported(path: str | Path) -> bool:
     return Path(path).suffix.lower() in SUPPORTED_SUFFIXES
 
 
-def load_bgr(source: str | Path | bytes) -> np.ndarray:
+def load_bgr(source: str | Path | bytes, max_side: int = 0) -> np.ndarray:
     """Read an image as BGR uint8 with the EXIF orientation already applied.
 
     iPhones almost never rotate the pixels themselves; they set an EXIF tag and
     let the viewer do it. Applying it here is what fixes the "photo lying on
     its side" case before anything else runs.
+
+    `max_side` bounds the result. For JPEG it is passed to the decoder, which
+    can produce a half or quarter size image directly -- far cheaper in both
+    time and memory than decoding twelve megapixels and throwing most of them
+    away, which matters on a small server.
     """
     if isinstance(source, (bytes, bytearray)):
         pil = Image.open(io.BytesIO(bytes(source)))
@@ -48,6 +53,14 @@ def load_bgr(source: str | Path | bytes) -> np.ndarray:
             )
         pil = Image.open(p)
 
+    if max_side > 0:
+        # A no-op unless the decoder can actually hit the target; it only
+        # halves, quarters and so on.
+        try:
+            pil.draft("RGB", (max_side, max_side))
+        except (AttributeError, ValueError):
+            pass
+
     pil = ImageOps.exif_transpose(pil)  # honour the orientation tag
     if pil.mode not in ("RGB", "L"):
         pil = pil.convert("RGB")
@@ -57,7 +70,8 @@ def load_bgr(source: str | Path | bytes) -> np.ndarray:
     rgb = np.asarray(pil)
     if rgb.ndim == 2:
         rgb = cv2.cvtColor(rgb, cv2.COLOR_GRAY2RGB)
-    return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+    bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+    return fit_max_side(bgr, max_side) if max_side > 0 else bgr
 
 
 def encode(bgr: np.ndarray, fmt: str = "jpg", quality: int = 95) -> bytes:

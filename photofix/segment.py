@@ -46,6 +46,12 @@ class Segmentation:
     confident: bool
     note: str = ""
     work: np.ndarray | None = None       # the downscaled image analysed
+    spread: float = 0.0                  # how far the border is from one surface
+
+    @property
+    def uniform_surface(self) -> bool:
+        """True when the product is lying on a single, even surface."""
+        return self.spread <= UNIFORM_SURFACE_MAX
 
 
 def _robust_stats(samples: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -67,6 +73,36 @@ def _border_samples(lab: np.ndarray, frac: float) -> np.ndarray:
         lab[:, -bx:, :].reshape(-1, 3),
     ]
     return np.concatenate(bands, axis=0).astype(np.float32)
+
+
+# Above this the frame border is not one surface but several things -- a wall
+# and a floor, a room behind a raised hand -- and the whole border-colour idea
+# stops applying. Measured spread is around 0.6 on the flat-lay photos this was
+# built for and 2.4 on a phone held up in a room, so the line sits between.
+UNIFORM_SURFACE_MAX = 1.0
+
+
+def surface_spread(bgr: np.ndarray, cfg: Config) -> float:
+    """How far the frame border is from being a single flat surface.
+
+    Combines the robust spread of the border in each CIELAB channel with the
+    share of border pixels that its own colour model calls outliers. 0 is a
+    perfectly even surface; 1 is the edge of usable.
+    """
+    lab = cv2.cvtColor(cv2.GaussianBlur(bgr, (5, 5), 0), cv2.COLOR_BGR2LAB).astype(np.float32)
+    band = _border_samples(lab, cfg.border_frac)
+    med, sigma = _robust_stats(band)
+
+    weights = np.array([0.6, 1.0, 1.0], dtype=np.float32)
+    z = np.sqrt(np.sum((((band - med) / sigma) * weights) ** 2, axis=1))
+    outliers = float((z > cfg.threshold_k).mean())
+
+    return float(max(
+        sigma[0] / 25.0,        # lightness: grain and shadow live here
+        sigma[1] / 2.5,         # chroma barely moves on one real surface
+        sigma[2] / 2.5,
+        outliers / 0.12,
+    ))
 
 
 def _fill_holes(mask: np.ndarray) -> np.ndarray:
@@ -220,17 +256,18 @@ def segment(bgr: np.ndarray, cfg: Config) -> Segmentation:
         else bgr.copy()
     )
 
+    spread = surface_spread(work, cfg)
     seed = _distance_mask(work, cfg)
     coverage_seed = float(seed.mean() / 255.0)
 
     note = ""
     if coverage_seed < 0.004:
         return Segmentation(seed, [], [], scale, coverage_seed, False,
-                            "no object stood out from the background", work)
+                            "no object stood out from the background", work, spread)
     if coverage_seed > 0.90:
         return Segmentation(seed, [], [], scale, coverage_seed, False,
                             "the background is not uniform enough to isolate the product",
-                            work)
+                            work, spread)
 
     mask = _grabcut(work, seed, cfg) if cfg.grabcut else seed
 
@@ -240,7 +277,7 @@ def segment(bgr: np.ndarray, cfg: Config) -> Segmentation:
 
     if not kept:
         return Segmentation(mask, [], all_comps, scale, 0.0, False,
-                            "no object survived filtering", work)
+                            "no object survived filtering", work, spread)
 
     keep_mask = np.zeros_like(mask)
     for c in kept:
@@ -255,4 +292,4 @@ def segment(bgr: np.ndarray, cfg: Config) -> Segmentation:
     if dropped > 0 and confident:
         note = f"ignored {dropped} object(s) outside the product"
 
-    return Segmentation(keep_mask, kept, all_comps, scale, coverage, confident, note, work)
+    return Segmentation(keep_mask, kept, all_comps, scale, coverage, confident, note, work, spread)

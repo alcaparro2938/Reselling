@@ -43,6 +43,20 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--keep-extras", action="store_true",
                    help="do not discard secondary objects")
 
+    g = p.add_argument_group("surface")
+    g.add_argument("--background", default="",
+                   help="'auto' replaces the background only when the photo has "
+                        "no usable surface (held in a hand, shot in a room); "
+                        "'wood' always replaces it; or give the path to a photo "
+                        "of your own surface. Empty keeps the original")
+    g.add_argument("--keep-hands", action="store_true",
+                   help="do not try to remove a hand holding the product")
+    g.add_argument("--no-shadow", action="store_true",
+                   help="do not lay a shadow under the product on a new surface")
+    g.add_argument("--offline", action="store_true",
+                   help="never fetch the cut-out model; keep the original "
+                        "background if it is not already cached")
+
     g = p.add_argument_group("straightening")
     g.add_argument("--no-straighten", action="store_true")
     g.add_argument("--max-rotation", type=float, default=25.0,
@@ -79,6 +93,10 @@ def config_from_args(a: argparse.Namespace) -> Config:
         fill=a.fill,
         center_bias_y=a.bias_y,
         drop_distractors=not a.keep_extras,
+        background=a.background,
+        remove_hands=not a.keep_hands,
+        shadow=not a.no_shadow,
+        allow_model_download=not a.offline,
         enhance=a.enhance,
         white_balance=a.white_balance,
         max_side=a.max_side,

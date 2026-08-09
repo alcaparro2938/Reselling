@@ -14,6 +14,11 @@ RUN pip install --no-cache-dir -r requirements.txt gunicorn
 COPY photofix ./photofix
 COPY webapp ./webapp
 
+# Fetch the 4.5 MB cut-out model now rather than on the first request, so a
+# cold start is not also a download, and so the image works without egress.
+ENV PHOTOFIX_MODEL_DIR=/app/models
+RUN python -c "from photofix import cutout; assert cutout.ensure_model(), 'model download failed'"
+
 ENV PYTHONUNBUFFERED=1
 EXPOSE 8000
 

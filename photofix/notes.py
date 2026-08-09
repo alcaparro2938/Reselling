@@ -83,3 +83,35 @@ def pad_short(target: float, reached: float) -> Note:
         f"still short of {target:.3f}, reached {reached:.3f}",
         {"target": round(target, 3), "reached": round(reached, 3)},
     )
+
+
+def background_replaced(source: str) -> Note:
+    return Note("background_replaced", f"placed on a new {source} surface",
+                {"source": source})
+
+
+def hand_removed(overlap: float) -> Note:
+    pct = round(overlap * 100)
+    return Note("hand_removed", f"removed the hand holding it ({pct}% of the "
+                                f"product was against skin)", {"percent": pct})
+
+
+def hand_covers_product(overlap: float) -> Note:
+    pct = round(overlap * 100)
+    return Note(
+        "hand_covers_product",
+        f"a hand covers about {pct}% of the product itself; that part cannot "
+        f"be recovered, so retake this one with the product put down",
+        {"percent": pct},
+    )
+
+
+def cutout_unavailable() -> Note:
+    return Note("cutout_unavailable",
+                "the cut-out model is not available, so the background was kept")
+
+
+def cutout_unsure(reason: str) -> Note:
+    return Note("cutout_unsure",
+                f"the cut-out looks wrong ({reason}), so the background was kept",
+                {"reason": reason})

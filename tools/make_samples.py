@@ -312,14 +312,84 @@ def scene_full_kit(angle: float) -> np.ndarray:
     return _grain(_tilt(canvas, angle))
 
 
+def _cluttered_room(h: int, w: int, seed: int = 9) -> np.ndarray:
+    """A background that defeats the border-colour trick: several surfaces, a
+    strong shadow, nothing uniform to sample."""
+    r = np.random.default_rng(seed)
+    img = np.zeros((h, w, 3), np.float32)
+    img[:, :] = (108, 116, 124)
+    img[: int(h * 0.42)] = (150, 152, 148)                    # a wall
+    cv2.rectangle(img, (0, int(h * 0.40)), (w, int(h * 0.46)),
+                  (78, 86, 96), -1)                            # a skirting board
+    for _ in range(9):                                         # objects lying about
+        x, y = int(r.integers(0, w)), int(r.integers(int(h * 0.5), h))
+        cv2.circle(img, (x, y), int(r.integers(30, 110)),
+                   tuple(float(v) for v in r.integers(60, 200, 3)), -1, cv2.LINE_AA)
+    img = cv2.GaussianBlur(img, (0, 0), 9)                     # out of focus
+    img += r.normal(0, 3.5, size=(h, w, 1))
+    return np.clip(img, 0, 255).astype(np.uint8)
+
+
+def _hand(h: int, w: int, tone=(150, 176, 205)) -> tuple[np.ndarray, np.ndarray]:
+    """A palm with four fingers curling over, in a plausible skin tone (BGR)."""
+    mask = np.zeros((h, w), np.uint8)
+    cv2.ellipse(mask, (int(w * 0.5), int(h * 0.72)),
+                (int(w * 0.36), int(h * 0.30)), 0, 0, 360, 255, -1)
+    for i in range(4):                                          # fingers reaching up
+        fx = int(w * (0.22 + i * 0.19))
+        cv2.ellipse(mask, (fx, int(h * 0.34)),
+                    (int(w * 0.075), int(h * 0.25)), 0, 0, 360, 255, -1)
+    mask = cv2.GaussianBlur(mask, (0, 0), 3)
+    mask = np.where(mask > 110, 255, 0).astype(np.uint8)
+
+    patch = np.zeros((h, w, 3), np.float32)
+    patch[:, :] = tone
+    shade = cv2.GaussianBlur(mask.astype(np.float32) / 255.0, (0, 0), 25)
+    patch *= (0.80 + 0.20 * shade)[:, :, None]                  # rounded, not flat
+    patch[mask == 0] = 0
+    return patch, mask
+
+
+def scene_in_hand(angle: float) -> np.ndarray:
+    """A phone held up in a hand against a room -- no surface, no usable border."""
+    H, W = 2200, 1650
+    canvas = _cluttered_room(H, W)
+
+    ph = int(H * 0.52)
+    pw = int(ph * PHONE_RATIO)
+    top, left = int(H * 0.20), (W - pw) // 2
+
+    hp, hm = _hand(int(ph * 0.85), int(pw * 1.9))
+    _paste(canvas, hp, hm, top + int(ph * 0.42), left - int(pw * 0.45), shadow=26)
+
+    pp, pm = phone(ph, pw, face="back")
+    _paste(canvas, pp, pm, top, left, shadow=22)
+
+    # Two fingers close back over the front of the phone, which is what makes
+    # this hard: that part of the product is genuinely hidden.
+    for i in range(2):
+        fx = left + int(pw * (0.16 + i * 0.54))
+        fm = np.zeros((int(ph * 0.16), int(pw * 0.3)), np.uint8)
+        cv2.ellipse(fm, (fm.shape[1] // 2, fm.shape[0] // 2),
+                    (fm.shape[1] // 2 - 2, fm.shape[0] // 2 - 2), 0, 0, 360, 255, -1)
+        fp = np.zeros((*fm.shape, 3), np.float32)
+        fp[:, :] = (150, 176, 205)
+        fp[fm == 0] = 0
+        _paste(canvas, fp, fm, top + int(ph * 0.66), fx, shadow=8)
+
+    return _grain(_tilt(canvas, angle))
+
+
 SCENES = {
     "single_phone": scene_single_phone,
     "phone_and_cable": scene_phone_and_cable,
     "with_distractor": scene_with_distractor,
     "full_kit": scene_full_kit,
+    "in_hand": scene_in_hand,
 }
 
 ANGLES = {
+    "in_hand": 3.6,
     "single_phone": 7.4,
     "phone_and_cable": -4.1,
     "with_distractor": 12.8,
