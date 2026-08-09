@@ -1,10 +1,11 @@
-# One-click deploy on Render (render.com). Free tier is enough for a
-# few hundred photos a day; it sleeps when unused and takes a moment to wake.
+# Blueprint for Render (render.com). Pushing this repo and pointing Render at
+# it is enough: it reads this file and fills the settings in by itself.
 services:
   - type: web
     name: photofix
     runtime: docker
     dockerfilePath: ./Dockerfile
     plan: free
+    region: frankfurt        # closest region to Spain
     healthCheckPath: /
     autoDeploy: true

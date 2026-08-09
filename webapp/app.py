@@ -15,6 +15,7 @@ import os
 import re
 import shutil
 import tempfile
+import threading
 import time
 import uuid
 import zipfile
@@ -52,6 +53,12 @@ ROOT = Path(
 ROOT.mkdir(parents=True, exist_ok=True)
 
 JOB_ID = re.compile(r"^[0-9a-f]{12}$")
+
+# Transforming one 12 megapixel photo peaks at roughly 280 MB, and the small
+# hosts this is meant to run on have 512 MB in total. So only one photo is
+# transformed at a time; receiving uploads and sending results back still
+# happen concurrently on the other threads.
+CPU_SLOTS = threading.Semaphore(int(os.environ.get("PHOTOFIX_CONCURRENCY", "1")))
 
 
 @dataclass
@@ -159,7 +166,8 @@ def _render(job: Job, cfg: Config) -> list[dict]:
         src = job.in_dir / name
         entry: dict = {"name": name, "original": f"/file/{job.id}/in/{name}"}
         try:
-            result = process(io_utils.load_bgr(src), cfg)
+            with CPU_SLOTS:
+                result = process(io_utils.load_bgr(src), cfg)
         except Exception as exc:
             entry.update(ok=False, error=str(exc))
             items.append(entry)

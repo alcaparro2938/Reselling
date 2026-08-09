@@ -76,17 +76,33 @@ siguiente.
 
 ## Publicarla en internet
 
-El repositorio trae un `Dockerfile` listo y un `render.yaml` para
-[Render](https://render.com): creas una cuenta, conectas el repositorio y
-detecta la configuración solo. El plan gratuito basta de sobra, aunque el
-servicio se duerme cuando no se usa y tarda unos segundos en despertar.
+Para tener una dirección fija que funcione desde cualquier sitio, sin depender
+de que el ordenador esté encendido.
 
-Sirve cualquier hosting que acepte un contenedor:
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/alcaparro2938/Reselling)
+
+1. Pulsa el botón y entra en [Render](https://render.com) con tu cuenta de
+   GitHub. Es gratis y no pide tarjeta.
+2. Render lee el `render.yaml` del repositorio y rellena la configuración solo.
+   Solo tienes que darle a **Apply**.
+3. La primera construcción tarda unos cinco minutos, porque instala OpenCV.
+4. Te queda una dirección del tipo `https://photofix-xxxx.onrender.com`. Ábrela
+   en el iPhone y añádela a la pantalla de inicio.
+
+Sobre el plan gratuito: se duerme tras un rato sin usarse, así que la primera
+visita del día tarda unos 30 segundos en despertar; las siguientes van rápidas.
+Tiene 512 MB de memoria, que da para una foto a la vez — un lote de veinte se
+procesa igual, solo que en fila.
+
+También sirve cualquier otro hosting que acepte un contenedor:
 
 ```bash
 docker build -t photofix .
 docker run -p 8000:8000 photofix
 ```
+
+Variables que entiende: `PORT`, `PHOTOFIX_WORKDIR` (dónde guarda los lotes) y
+`PHOTOFIX_CONCURRENCY` (fotos a la vez; súbela a 2 o 3 si le das más memoria).
 
 Ten en cuenta que así las fotos sí viajan a un servidor ajeno mientras se
 procesan. Se borran solas al cabo de una hora, pero si te importa la

@@ -139,8 +139,10 @@ def process(bgr: np.ndarray, cfg: Config | None = None) -> Result:
             report.output_ratio = out.shape[1] / out.shape[0]
 
     # --- finish ----------------------------------------------------------
-    out = enhance.finish(out, cfg.enhance, cfg.white_balance)
+    # Resize first: sharpening belongs at the size the photo will be seen at,
+    # and everything downstream then works on a much smaller array.
     out = io_utils.fit_max_side(out, cfg.max_side)
+    out = enhance.finish(out, cfg.enhance, cfg.white_balance)
 
     report.output_size = (out.shape[1], out.shape[0])
     report.elapsed_ms = (time.perf_counter() - started) * 1000

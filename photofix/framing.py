@@ -28,26 +28,64 @@ class Crop:
 
 
 def subject_bbox(mask: np.ndarray) -> tuple[int, int, int, int] | None:
-    """Tight bounding box around everything still in the mask."""
-    ys, xs = np.nonzero(mask)
-    if len(xs) == 0:
+    """Tight bounding box around everything still in the mask.
+
+    boundingRect walks the mask in place. The obvious np.nonzero version builds
+    two index arrays first, which on a full-resolution mask means tens of
+    megabytes to answer a question with four numbers in it.
+    """
+    x, y, w, h = cv2.boundingRect(mask)
+    if w == 0 or h == 0:
         return None
-    x0, x1 = int(xs.min()), int(xs.max())
-    y0, y1 = int(ys.min()), int(ys.max())
-    return x0, y0, x1 - x0 + 1, y1 - y0 + 1
+    return int(x), int(y), int(w), int(h)
 
 
-def _integral_invalid(valid: np.ndarray) -> np.ndarray:
-    """Summed-area table of invalid pixels, for O(1) rectangle queries."""
-    inv = (valid == 0).astype(np.int64)
-    return np.pad(inv.cumsum(axis=0).cumsum(axis=1), ((1, 0), (1, 0)))
+# The framer asks "how much of this rectangle fell outside the original?"
+# thousands of times, which wants a summed-area table. Built at full size that
+# table is enormous -- a 12 megapixel photo needs over 100 MB, and the two
+# cumulative sums each need another copy of it. The answer only steers a crop
+# by a pixel or two, so it is computed on a reduced copy instead.
+PLAN_MAX_SIDE = 1400
 
 
-def _invalid_in(integral: np.ndarray, x: int, y: int, w: int, h: int) -> int:
-    x2, y2 = x + w, y + h
-    return int(
-        integral[y2, x2] - integral[y, x2] - integral[y2, x] + integral[y, x]
-    )
+class _InvalidIndex:
+    """O(1) lookup of the invalid area inside any rectangle.
+
+    Coordinates stay in full resolution; only the lookup grid is reduced. A
+    reduced cell counts as invalid unless it is *entirely* valid, so the answer
+    never under-reports the damage.
+    """
+
+    def __init__(self, valid: np.ndarray, max_side: int = PLAN_MAX_SIDE):
+        h, w = valid.shape[:2]
+        self.scale = min(1.0, max_side / max(h, w, 1))
+
+        if self.scale < 1.0:
+            small = cv2.resize(
+                valid,
+                (max(1, round(w * self.scale)), max(1, round(h * self.scale))),
+                interpolation=cv2.INTER_AREA,
+            )
+            small = np.where(small >= 255, 0, 1).astype(np.int32)
+        else:
+            small = (valid == 0).astype(np.int32)
+
+        self.h, self.w = small.shape[:2]
+        self.integral = np.pad(
+            small.cumsum(axis=0, dtype=np.int32).cumsum(axis=1, dtype=np.int32),
+            ((1, 0), (1, 0)),
+        )
+
+    def fraction(self, x: int, y: int, w: int, h: int) -> float:
+        s = self.scale
+        x0, y0 = max(0, int(np.floor(x * s))), max(0, int(np.floor(y * s)))
+        x1 = min(self.w, max(x0 + 1, int(np.ceil((x + w) * s))))
+        y1 = min(self.h, max(y0 + 1, int(np.ceil((y + h) * s))))
+        if x1 <= x0 or y1 <= y0:
+            return 0.0
+        g = self.integral
+        bad = int(g[y1, x1] - g[y0, x1] - g[y1, x0] + g[y0, x0])
+        return bad / float((x1 - x0) * (y1 - y0))
 
 
 def _candidate_ratios(cfg: Config, original_ratio: float, subject_ratio: float) -> list[float]:
@@ -81,7 +119,7 @@ def plan_crop(
 
     fill = float(np.clip(cfg.fill, 0.30, 1.0))
     mode = (cfg.ratio or "auto").strip().lower()
-    integral = _integral_invalid(valid)
+    invalid = _InvalidIndex(valid)
 
     ideal_cx = sx + sw / 2.0
     ideal_cy = sy + sh / 2.0
@@ -137,11 +175,10 @@ def plan_crop(
             want_x = ideal_cx - cw / 2.0
             want_y = ideal_cy - ch / 2.0 - cfg.center_bias_y * ch
 
-            area = float(cw * ch)
             best: tuple[float, float, int, int] | None = None
             for y in _search_positions(want_y, y_lo, y_hi):
                 for x in _search_positions(want_x, x_lo, x_hi):
-                    frac = _invalid_in(integral, x, y, cw, ch) / area
+                    frac = invalid.fraction(x, y, cw, ch)
                     dist = abs(x - want_x) + abs(y - want_y)
                     key = (frac, dist)
                     if best is None or key < (best[0], best[1]):

@@ -17,6 +17,8 @@ COPY webapp ./webapp
 ENV PYTHONUNBUFFERED=1
 EXPOSE 8000
 
-# One photo takes about a second, so the timeout allows for a large batch
-# arriving at once. Two workers keep memory modest on a small instance.
-CMD ["sh", "-c", "gunicorn webapp.app:app --bind 0.0.0.0:${PORT:-8000} --workers 2 --threads 4 --timeout 300"]
+# A 12 megapixel photo peaks around 280 MB, so a 512 MB instance has room for
+# exactly one worker; threads handle the rest of the traffic, and the app
+# itself only transforms one photo at a time. The long timeout is for a large
+# batch arriving in a single request.
+CMD ["sh", "-c", "gunicorn webapp.app:app --bind 0.0.0.0:${PORT:-8000} --workers 1 --threads 4 --timeout 600"]
