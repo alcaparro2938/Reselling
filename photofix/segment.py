@@ -77,9 +77,12 @@ def _border_samples(lab: np.ndarray, frac: float) -> np.ndarray:
 
 # Above this the frame border is not one surface but several things -- a wall
 # and a floor, a room behind a raised hand -- and the whole border-colour idea
-# stops applying. Measured spread is around 0.6 on the flat-lay photos this was
-# built for and 2.4 on a phone held up in a room, so the line sits between.
-UNIFORM_SURFACE_MAX = 1.0
+# stops applying. Measured spread is around 0.6 on clean synthetic flat-lays and
+# 2.4 on a phone held up in a room. Real flat-lays on a wooden table measure
+# 1.2-1.8: the seam between two boards, the corner of the box or a cable at the
+# edge all add to it. At 1.0 every one of those had its real wood swapped for a
+# generated one, which looks worse and bites into the phone's outline.
+UNIFORM_SURFACE_MAX = 2.0
 
 
 def surface_spread(bgr: np.ndarray, cfg: Config) -> float:
@@ -134,6 +137,12 @@ def _distance_mask(bgr: np.ndarray, cfg: Config) -> np.ndarray:
     return _fill_holes(raw)
 
 
+def _grabcut_ring(bgr: np.ndarray, cfg: Config) -> int:
+    """Width of the frame band GrabCut is forced to treat as background."""
+    h, w = bgr.shape[:2]
+    return max(2, int(round(min(h, w) * cfg.border_frac * 0.5)))
+
+
 def _grabcut(bgr: np.ndarray, seed: np.ndarray, cfg: Config) -> np.ndarray:
     """Refine `seed` with GrabCut. Returns the seed unchanged on any failure."""
     h, w = bgr.shape[:2]
@@ -148,7 +157,7 @@ def _grabcut(bgr: np.ndarray, seed: np.ndarray, cfg: Config) -> np.ndarray:
     gc[sure_fg > 0] = cv2.GC_FGD
     gc[near == 0] = cv2.GC_BGD
     # The outermost ring is background by construction.
-    b = max(2, int(round(min(h, w) * cfg.border_frac * 0.5)))
+    b = _grabcut_ring(bgr, cfg)
     gc[:b, :] = cv2.GC_BGD
     gc[-b:, :] = cv2.GC_BGD
     gc[:, :b] = cv2.GC_BGD
@@ -173,10 +182,11 @@ def _grabcut(bgr: np.ndarray, seed: np.ndarray, cfg: Config) -> np.ndarray:
     return _fill_holes(out)
 
 
-def _describe(mask: np.ndarray) -> tuple[list[Component], np.ndarray]:
+def _describe(mask: np.ndarray, margin: int | None = None) -> tuple[list[Component], np.ndarray]:
     n, labels, stats, centroids = cv2.connectedComponentsWithStats(mask, 8)
     h, w = mask.shape[:2]
-    margin = max(2, int(round(min(h, w) * 0.005)))
+    if margin is None:
+        margin = max(2, int(round(min(h, w) * 0.005)))
     out: list[Component] = []
 
     for i in range(1, n):
@@ -271,7 +281,13 @@ def segment(bgr: np.ndarray, cfg: Config) -> Segmentation:
 
     mask = _grabcut(work, seed, cfg) if cfg.grabcut else seed
 
-    all_comps, labels = _describe(mask)
+    # GrabCut is told the outermost ring is background, so after it nothing
+    # can reach the true frame edge. Measured against the frame itself, the
+    # "cut off by the edge" rule would never fire and a box corner or a cable
+    # poking in from the side would be kept as part of the listing. Measure
+    # against the edge of the ring instead.
+    ring = _grabcut_ring(work, cfg) if cfg.grabcut else 0
+    all_comps, labels = _describe(mask, margin=ring + max(2, int(round(min(work.shape[:2]) * 0.005))))
     frame_area = work.shape[0] * work.shape[1]
     kept = _filter(all_comps, frame_area, cfg)
 

@@ -381,3 +381,124 @@ def test_without_the_model_the_original_background_is_kept(scenes, tmp_path, mon
     result = process(image, Config(background="wood", allow_model_download=False))
     assert "cutout_unavailable" in _codes(result)
     assert result.image.size > 0
+
+
+# --------------------------------------------------------------------------
+# turning upright
+# --------------------------------------------------------------------------
+from photofix import orient                                            # noqa: E402
+
+
+def _phone_on_floor(face: str, body=(60, 64, 72)) -> np.ndarray:
+    """A phone lying upright in the middle of a wooden floor."""
+    H = W = 1500
+    canvas = ms.wood_floor(H, W, seed=5)
+    ph = 900
+    pw = int(ph * ms.PHONE_RATIO)
+    patch, mask = ms.phone(ph, pw, face=face, body=body)
+    ms._paste(canvas, patch, mask, (H - ph) // 2, (W - pw) // 2)
+    return canvas
+
+
+@pytest.mark.parametrize("face", ["back", "front"])
+@pytest.mark.parametrize("k", [0, 1, 2, 3])
+def test_a_phone_is_turned_so_its_top_is_up(face, k):
+    image = np.ascontiguousarray(np.rot90(_phone_on_floor(face), k))
+    result = process(image, Config())
+    # np.rot90 turned it k quarters anticlockwise; undoing that is k clockwise.
+    assert result.report.turned_deg == (k * 90) % 360, (
+        face, k, result.report.turned_deg, result.report.turn_source)
+    h, w = result.image.shape[:2]
+    assert h > w, "an upright phone makes a portrait photo"
+    if k:
+        assert result.report.turn_source == ("camera" if face == "back" else "island")
+
+
+def test_the_turn_is_judged_by_the_feature_not_the_shape():
+    # A plain box has a phone's outline but neither a camera nor an island:
+    # nothing says which end is up, so nothing turns.
+    H = W = 1400
+    canvas = ms.wood_floor(H, W, seed=6)
+    bh, bw = 860, 410
+    patch, mask = ms.retail_box(bh, bw)
+    ms._paste(canvas, patch, mask, (H - bh) // 2, (W - bw) // 2)
+    result = process(np.ascontiguousarray(np.rot90(canvas)), Config())
+    assert result.report.turned_deg == 0
+
+
+def test_turning_upright_can_be_switched_off():
+    image = np.ascontiguousarray(np.rot90(_phone_on_floor("back")))
+    assert process(image, Config(upright=False)).report.turned_deg == 0
+
+
+def test_a_turn_chosen_by_hand_overrides_the_guess():
+    image = np.ascontiguousarray(np.rot90(_phone_on_floor("back")))   # top now left
+    result = process(image, Config(turn="270"))
+    assert result.report.turned_deg == 270
+    assert result.report.turn_source == "manual"
+
+
+def test_a_turn_that_is_not_a_quarter_is_refused():
+    with pytest.raises(ValueError):
+        process(_phone_on_floor("back"), Config(turn="45"))
+
+
+def test_quarter_turn_arithmetic():
+    up, right, down, left = (0, -1), (1, 0), (0, 1), (-1, 0)
+    assert orient._turns_for(np.array(up)) == 0
+    assert orient._turns_for(np.array(right)) == 1     # anticlockwise brings it up
+    assert orient._turns_for(np.array(down)) == 2
+    assert orient._turns_for(np.array(left)) == 3
+
+
+# --------------------------------------------------------------------------
+# objects cut off by the frame
+# --------------------------------------------------------------------------
+def test_something_poking_in_from_the_edge_is_not_part_of_the_product():
+    # Only a sliver of the intruder shows. GrabCut is told the outer ring is
+    # background, so this used to stop short of the edge and be kept.
+    H, W = 1200, 1400
+    canvas = ms.wood_floor(H, W, seed=7)
+    ph = 760
+    pw = int(ph * ms.PHONE_RATIO)
+    ms._paste(canvas, *ms.phone(ph, pw, face="back", body=(60, 64, 72)),
+              (H - ph) // 2, (W - pw) // 2)
+    sliver = np.full((300, 200), 255, np.uint8)
+    ms._paste(canvas, np.full((300, 200, 3), 245, np.float32), sliver, 200, W - 90)
+    seg = segment(canvas, Config())
+    assert len(seg.components) == 1
+    assert len(seg.all_components) >= 2
+
+
+# --------------------------------------------------------------------------
+# web interface: turning one photo by hand
+# --------------------------------------------------------------------------
+def test_the_web_turn_button_sticks(tmp_path, monkeypatch):
+    import io as _io
+    monkeypatch.setenv("PHOTOFIX_WORKDIR", str(tmp_path))
+    import importlib
+    import webapp.app as webapp_app
+    webapp_app = importlib.reload(webapp_app)
+    client = webapp_app.app.test_client()
+
+    ok, buf = cv2.imencode(".jpg", _phone_on_floor("back"))
+    assert ok
+    res = client.post("/api/upload", data={
+        "photos": (_io.BytesIO(buf.tobytes()), "p.jpg"),
+    }, content_type="multipart/form-data")
+    assert res.status_code == 200, res.get_json()
+    job = res.get_json()["job"]
+    first = res.get_json()["items"][0]
+    assert first["turned"] == 0
+
+    res = client.post(f"/api/turn/{job}", data={"name": "p.jpg", "turn": "90"})
+    assert res.status_code == 200, res.get_json()
+    item = res.get_json()["item"]
+    assert item["turned"] == 90 and item["turn_manual"]
+
+    # Changing the settings afterwards keeps the hand-made turn.
+    res = client.post(f"/api/rerender/{job}", data={"fill": "0.7"})
+    assert res.get_json()["items"][0]["turned"] == 90
+
+    assert client.post(f"/api/turn/{job}", data={"name": "p.jpg", "turn": "45"}).status_code == 400
+    assert client.post(f"/api/turn/{job}", data={"name": "../x", "turn": "90"}).status_code == 404

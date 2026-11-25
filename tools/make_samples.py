@@ -151,6 +151,13 @@ def phone(h: int, w: int, face: str = "back", body=(238, 240, 242)) -> tuple[np.
                     max(1, int(w / 160)), cv2.LINE_AA)
         cv2.line(tmp, (int(w * 0.33), int(h * 0.955)), (int(w * 0.67), int(h * 0.955)),
                  (250, 250, 250), max(2, int(h / 260)), cv2.LINE_AA)
+        # Dynamic Island: a black pill centred near the top, clear of the bezel
+        iw, ih = int(w * 0.31), int(w * 0.09)
+        iy = bz + int(h * 0.025)
+        cv2.rectangle(tmp, (w // 2 - iw // 2 + ih // 2, iy), (w // 2 + iw // 2 - ih // 2, iy + ih),
+                      (4, 4, 4), -1)
+        cv2.circle(tmp, (w // 2 - iw // 2 + ih // 2, iy + ih // 2), ih // 2, (4, 4, 4), -1, cv2.LINE_AA)
+        cv2.circle(tmp, (w // 2 + iw // 2 - ih // 2, iy + ih // 2), ih // 2, (4, 4, 4), -1, cv2.LINE_AA)
         patch = tmp.astype(np.float32)
 
     patch[mask == 0] = 0
