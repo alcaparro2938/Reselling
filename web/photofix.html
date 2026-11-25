@@ -442,7 +442,11 @@ const PF = (() => {
     for (let i = 0, j = 0; i < m.length; i++, j += 4) {
       const R = rgba[j], G = rgba[j + 1], B = rgba[j + 2];
       const Y = 0.299 * R + 0.587 * G + 0.114 * B, Cr = (R - Y) * 0.713 + 128, Cb = (B - Y) * 0.564 + 128;
-      m[i] = R > 80 && R > G && G >= B * 0.8 && Cr >= 136 && Cr <= 178 && Cb >= 78 && Cb <= 128 ? 1 : 0;
+      const lit = R > 80 && R > G && G >= B * 0.8 && Cb >= 78 && Cb <= 128;
+      // Skin in shadow -- the palm under a phone held edge-on -- is dark but
+      // still plainly red; a black or grey phone is neutral at any brightness.
+      const shaded = Y < 100 && R > 25 && R >= G * 1.35 && R >= B * 1.6;
+      m[i] = (lit || shaded) && Cr >= 136 && Cr <= 178 ? 1 : 0;
     }
     return dilate(erode(erode(dilate(m, w, h, 2), w, h, 2), w, h, 1), w, h, 1);
   }
@@ -667,7 +671,7 @@ const PF = (() => {
   }
 
   // ---------- framing and rendering ---------------------------------------
-  function planCrop(sub, W, H, A, fill, ratioPref, forbid, ratioList) {
+  function planCrop(sub, W, H, A, fill, ratioPref, forbid, ratioList, centerTolY = 0.03) {
     // Rotated space: the original turned anticlockwise by A around its centre.
     const c = Math.cos(A), s = Math.sin(A), cx = W / 2, cy = H / 2;
     const inside = (x, y) => { const ox = c * x - s * y + cx, oy = s * x + c * y + cy, tol = 0.012 * Math.max(W, H);
@@ -684,21 +688,31 @@ const PF = (() => {
     const sw = sub.x1 - sub.x0, sh = sub.y1 - sub.y0, scx = (sub.x0 + sub.x1) / 2, scy = (sub.y0 + sub.y1) / 2;
     const ratios = ratioPref ? [ratioPref] : (ratioList || RATIOS);
     const opts = ratios.map(r => { const cw = Math.max(sw / fill, r * sh / fill); return { r, cw, ch: cw / r, waste: cw * (cw / r) - sw * sh }; }).sort((a, b) => a.waste - b.waste);
-    let best = null;
-    for (const o of opts) {
-      let found = null;
-      for (let f = 1; f >= 0 && !found; f -= 0.04) {
-        const cw = Math.max(sw, sw + (o.cw - sw) * f), ch = Math.max(sh, cw / o.r);
-        const cw2 = ch * o.r; if (cw2 < sw - 0.5) continue;
-        const xs = [], ys = [];
-        for (let t = 0; t <= 8; t++) { const k = t % 2 ? (t + 1) / 2 : -t / 2; xs.push(scx - cw2 / 2 + k * (cw2 - sw) / 8); ys.push(scy - ch / 2 + k * (ch - sh) / 8); }
-        for (const y0 of ys) { if (found) break; for (const x0 of xs) {
-          if (x0 > sub.x0 + 0.5 || y0 > sub.y0 + 0.5 || x0 + cw2 < sub.x1 - 0.5 || y0 + ch < sub.y1 - 0.5) continue;
-          if (fits(x0, y0, cw2, ch)) { found = { x0, y0, cw: cw2, ch, f }; break; } } }
+    // Centred first: a smaller margin around a centred product reads better
+    // than a generous one with the product pushed to the side. Only when no
+    // centred frame fits at all is the frame allowed to slide.
+    const search = (tolX, tolY, minF) => {
+      let pick = null;
+      for (const o of opts) {
+        let found = null;
+        for (let f = 1; f >= 0 && !found; f -= 0.02) {
+          const cw = Math.max(sw, sw + (o.cw - sw) * f), ch = Math.max(sh, cw / o.r);
+          const cw2 = ch * o.r; if (cw2 < sw - 0.5) continue;
+          const xs = [], ys = [];
+          for (let t = 0; t <= 16; t++) { const k = t % 2 ? (t + 1) / 2 : -t / 2;
+            const dx = k * (cw2 - sw) / 16, dy = k * (ch - sh) / 16;
+            if (Math.abs(dx) <= tolX * cw2) xs.push(scx - cw2 / 2 + dx);
+            if (Math.abs(dy) <= tolY * ch) ys.push(scy - ch / 2 + dy); }
+          for (const y0 of ys) { if (found) break; for (const x0 of xs) {
+            if (x0 > sub.x0 + 0.5 || y0 > sub.y0 + 0.5 || x0 + cw2 < sub.x1 - 0.5 || y0 + ch < sub.y1 - 0.5) continue;
+            if (fits(x0, y0, cw2, ch)) { found = { x0, y0, cw: cw2, ch, f }; break; } } }
+        }
+        if (found && found.f >= 0.6) return found;
+        if (found && found.f >= minF && (!pick || found.f > pick.f)) pick = found;
       }
-      if (found && found.f >= 0.6) { best = found; break; }
-      if (found && (!best || found.f > best.f)) best = found;
-    }
+      return pick;
+    };
+    let best = search(0.03, centerTolY, 0.15) || search(1, 1, 0);
     if (!best) {
       // The product runs off the photo (an arm reaching in from the edge).
       // Cutting a little of it beats painting the missing corners flat:
@@ -778,10 +792,13 @@ const PF = (() => {
       // about half the frame, and the frame is squarish so the hand fits.
       const fill = held ? Math.min(opts.fill, 0.5) : opts.fill;
       const shapes = held ? [5 / 4, 1, 4 / 5] : null;
-      crop = planCrop(sub, W, H, A, fill, opts.ratio, forbid, shapes);
+      // In a hand the phone sits above the hand that holds it, so it may sit
+      // a little high; side to side it is always centred.
+      const tolY = held ? 0.15 : 0.03;
+      crop = planCrop(sub, W, H, A, fill, opts.ratio, forbid, shapes, tolY);
       if (crop.overflow || crop.trimmed) {
         // Nothing clean fits: better a little clutter than a cut product.
-        crop = planCrop(sub, W, H, A, fill, opts.ratio, null, shapes);
+        crop = planCrop(sub, W, H, A, fill, opts.ratio, null, shapes, tolY);
         report.notes.push("No se ha podido dejar fuera todo lo que rodea al producto sin cortarlo.");
       }
       if (held) report.hand = true;
