@@ -391,11 +391,60 @@ const PF = (() => {
     for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (y < by || y >= h - by || x < bx || x >= w - bx) idx.push(y * w + x);
     return idx;
   }
+  // Which border pixels are the surface. Normally all of them. But a box
+  // that nearly fills the photo covers most of the border too, and then the
+  // box would be taken for the table and the strip of table for the product.
+  // When the border holds two clearly different colours, the surface is the
+  // one that is not in the middle of the photo.
+  function surfaceSamples(lab, w, h, bidx) {
+    const step = Math.max(1, Math.floor(bidx.length / 4000)), pts = [];
+    for (let t = 0; t < bidx.length; t += step) pts.push(bidx[t]);
+    const at = (i, c) => lab[c][i];
+    let c0 = [0, 1, 2].map(c => at(pts[0], c)), c1 = c0.slice(), far = 0;
+    for (const i of pts) { const d = (at(i, 0) - c0[0]) ** 2 + (at(i, 1) - c0[1]) ** 2 + (at(i, 2) - c0[2]) ** 2; if (d > far) { far = d; c1 = [0, 1, 2].map(c => at(i, c)); } }
+    let assign = [];
+    for (let it = 0; it < 8; it++) {
+      const sum = [[0, 0, 0, 0], [0, 0, 0, 0]];
+      assign = pts.map(i => { const d0 = [0, 1, 2].reduce((a, c) => a + (at(i, c) - c0[c]) ** 2, 0), d1 = [0, 1, 2].reduce((a, c) => a + (at(i, c) - c1[c]) ** 2, 0), k = d1 < d0 ? 1 : 0;
+        for (let c = 0; c < 3; c++) sum[k][c] += at(i, c); sum[k][3]++; return k; });
+      if (!sum[0][3] || !sum[1][3]) return bidx;
+      c0 = sum[0].slice(0, 3).map(v => v / sum[0][3]); c1 = sum[1].slice(0, 3).map(v => v / sum[1][3]);
+    }
+    // Light and dark grain of one wood can be this far apart in lightness
+    // alone; a box against a table is much further.
+    const sep = Math.sqrt([0, 1, 2].reduce((a, c) => a + (c0[c] - c1[c]) ** 2, 0));
+    if (sep < 60) return bidx;
+    let n0 = 0, n1 = 0;
+    for (let y = Math.floor(h * 0.3); y < h * 0.7; y += 3) for (let x = Math.floor(w * 0.3); x < w * 0.7; x += 3) {
+      const i = y * w + x, d0 = [0, 1, 2].reduce((a, c) => a + (at(i, c) - c0[c]) ** 2, 0), d1 = [0, 1, 2].reduce((a, c) => a + (at(i, c) - c1[c]) ** 2, 0);
+      if (d1 < d0) n1++; else n0++;
+    }
+    const keep = n0 <= n1 ? 0 : 1;
+    // ...and the other colour has to fill the middle of the photo, as a
+    // product that nearly fills the frame does.
+    const centreShare = (keep === 0 ? n0 : n1) / Math.max(1, n0 + n1);
+    if (centreShare > 0.25) return bidx;
+    // Even as a minority, the other colour spreads the surface model so wide
+    // that a white box against dark wood passes for wood: so the surface is
+    // learnt from its own colour whenever the two can be told apart.
+    // A table frames the product on every side; a sleeve or the floor comes
+    // in from one. Only a colour found along at least three sides of the
+    // photo is taken for the surface.
+    const by = Math.max(2, Math.round(h * BORDER_FRAC)), bx = Math.max(2, Math.round(w * BORDER_FRAC));
+    const sides = [[0, 0], [0, 0], [0, 0], [0, 0]];
+    pts.forEach((i, j) => { const x = i % w, y = (i / w) | 0, mine = assign[j] === keep ? 1 : 0;
+      if (y < by) { sides[0][0] += mine; sides[0][1]++; } if (y >= h - by) { sides[1][0] += mine; sides[1][1]++; }
+      if (x < bx) { sides[2][0] += mine; sides[2][1]++; } if (x >= w - bx) { sides[3][0] += mine; sides[3][1]++; } });
+    if (sides.filter(([a, n]) => n && a / n >= 0.08).length < 3) return bidx;
+    return pts.filter((_, j) => assign[j] === keep);
+  }
+
   function segment(work) {
     const { rgba, w, h } = work, n = w * h;
     const lab = labOf(rgba, w, h), bidx = borderIdx(w, h, BORDER_FRAC);
     const med = [], sig = [];
-    for (const ch of lab) { const s = bidx.map(i => ch[i]), m = median(s); med.push(m); sig.push(Math.max(1.5, 1.4826 * median(s.map(v => Math.abs(v - m))))); }
+    const surf = surfaceSamples(lab, w, h, bidx);
+    for (const ch of lab) { const s = surf.map(i => ch[i]), m = median(s); med.push(m); sig.push(Math.max(1.5, 1.4826 * median(s.map(v => Math.abs(v - m))))); }
     const wts = [0.6, 1, 1];
     let raw = new Uint8Array(n);
     for (let i = 0; i < n; i++) {
@@ -437,16 +486,14 @@ const PF = (() => {
   // comes in from the edge of the photo (a sleeve, the floor, a box corner, a
   // charger) is something the frame must leave out, even if that means
   // cutting through the wrist.
+  // Skin by its hue in CIELAB. Measured on the seller's photos: skin, lit or
+  // in shadow, sits between 41 and 55 degrees; the wooden tables sit around
+  // 80-87, more yellow. A rule in RGB or YCrCb let dark wood grain through.
   function skinMask(rgba, w, h) {
-    const m = new Uint8Array(w * h);
-    for (let i = 0, j = 0; i < m.length; i++, j += 4) {
-      const R = rgba[j], G = rgba[j + 1], B = rgba[j + 2];
-      const Y = 0.299 * R + 0.587 * G + 0.114 * B, Cr = (R - Y) * 0.713 + 128, Cb = (B - Y) * 0.564 + 128;
-      const lit = R > 80 && R > G && G >= B * 0.8 && Cb >= 78 && Cb <= 128;
-      // Skin in shadow -- the palm under a phone held edge-on -- is dark but
-      // still plainly red; a black or grey phone is neutral at any brightness.
-      const shaded = Y < 100 && R > 25 && R >= G * 1.35 && R >= B * 1.6;
-      m[i] = (lit || shaded) && Cr >= 136 && Cr <= 178 ? 1 : 0;
+    const [L, A, B] = labOf(rgba, w, h), m = new Uint8Array(w * h);
+    for (let i = 0; i < m.length; i++) {
+      const a = A[i] - 128, b = B[i] - 128, c = Math.hypot(a, b), hue = Math.atan2(b, a) * 180 / Math.PI;
+      m[i] = L[i] >= 15 && c >= 12 && hue >= 28 && hue <= 64 ? 1 : 0;
     }
     return dilate(erode(erode(dilate(m, w, h, 2), w, h, 2), w, h, 1), w, h, 1);
   }
@@ -642,6 +689,24 @@ const PF = (() => {
     }
     return false;
   }
+  // Camera lenses: round areas closed by their rims, in the top part of the
+  // patch, sized like lenses relative to the phone's width.
+  function lensCount(v) {
+    const { patch, W, H } = v, y1 = Math.min(H, Math.floor(Math.max(0.42 * H, 0.9 * W)));
+    const e = dilate(canny(blurU8(patch, W, H, K3), W, H, 30, 90), W, H, 1);
+    const open = new Uint8Array(W * y1); for (let i = 0; i < open.length; i++) open[i] = e[i] ? 0 : 1;
+    const { comps } = components(open, W, y1);
+    let n = 0;
+    for (const c of comps) {
+      const bw = c.x1 - c.x0 + 1, bh = c.y1 - c.y0 + 1;
+      if (c.x0 <= 1 || c.y0 <= 1 || c.x1 >= W - 2 || c.y1 >= y1 - 2) continue;
+      const d = (bw + bh) / 2;
+      if (d < 0.12 * W || d > 0.36 * W || bw / bh < 0.75 || bw / bh > 1.33) continue;
+      if (c.area / (Math.PI * d * d / 4) < 0.72) continue;
+      n++;
+    }
+    return n;
+  }
   function turnsFor(d) {
     let best = 0, bestUp = -Infinity, x = d[0], y = d[1];
     for (let k = 0; k < 4; k++) { if (-y > bestUp) { bestUp = -y; best = k; } [x, y] = [y, -x]; }
@@ -677,11 +742,108 @@ const PF = (() => {
       const isl = views.map(hasIsland);
       if (isl[0] !== isl[1]) return { turns: turnsFor(views[isl[0] ? 0 : 1].dir), why: "island" };
     }
+    // Lenses are the strongest sign there is: two or more round, rimmed
+    // areas at one end and none at the other. This is what turns a close-up
+    // of the camera, where only part of the phone is in the photo.
+    const lenses = views.map(lensCount);
     const st = views.map(cornerEdges), tls = st.map(s => s[0]), mids = st.map(s => s[1]);
+    if (Math.max(...lenses) >= 2 && Math.min(...lenses) === 0) return { turns: turnsFor(views[lenses[0] ? 0 : 1].dir), why: "camera" };
+    // Round shapes at both ends (wood grain can close into a loop): turn
+    // only if the end with more of them is also clearly the busier one.
+    if (Math.max(...lenses) >= 2 && lenses[0] !== lenses[1]) {
+      const e = lenses[0] > lenses[1] ? 0 : 1;
+      if (tls[e] >= 1.5 * Math.max(tls[1 - e], 0.01)) return { turns: turnsFor(views[e].dir), why: "camera" };
+    }
     const hi = tls[0] >= tls[1] ? 0 : 1, lo = 1 - hi;
     const back = whole ? Math.max(...mids) < BACK_MAX_MID && tls[hi] >= 2 * Math.max(tls[lo], 0.01) : tls[hi] >= 2.5 * Math.max(tls[lo], 0.01);
     if (back && tls[hi] >= 2.5 * Math.max(...mids)) return { turns: turnsFor(views[hi].dir), why: "camera" };
-    return { turns: 0, why: "no se ve con claridad la cámara ni la Dynamic Island" };
+    return { turns: 0, why: "no se ve con claridad la cámara, la Dynamic Island ni texto legible" };
+  }
+
+  // ---------- which way is up, from printed text ---------------------------
+  // A box has no camera to go by, but it has print. Lines of text run along
+  // the reading direction, and within a line the bottoms of the words sit on
+  // one baseline while their tops vary (capitals, b, d, l, t). Upside down,
+  // the even edge is on top. This needs letters of a readable size; smaller
+  // than about 8 pixels the evidence is noise and nothing is turned.
+  function textTurn(img, W, H, seg) {
+    const main = seg.kept[0], k0 = seg.w / W;
+    const x0 = Math.max(0, main.x0 / k0), y0 = Math.max(0, main.y0 / k0), x1 = Math.min(W, (main.x1 + 1) / k0), y1 = Math.min(H, (main.y1 + 1) / k0);
+    const sc = Math.min(1, 2400 / Math.max(x1 - x0, y1 - y0)), w = Math.max(1, Math.round((x1 - x0) * sc)), h = Math.max(1, Math.round((y1 - y0) * sc));
+    if (w < 60 || h < 60) return null;
+    const cv = document.createElement("canvas"); cv.width = w; cv.height = h;
+    const ctx = cv.getContext("2d", { willReadFrequently: true });
+    ctx.drawImage(img, x0, y0, x1 - x0, y1 - y0, 0, 0, w, h);
+    const g = grayOf(ctx.getImageData(0, 0, w, h).data, w, h); cv.width = cv.height = 0;
+    // The product's own area, pulled in from its outline.
+    const m = new Uint8Array(w * h);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const sx = Math.min(seg.w - 1, Math.floor((x0 + x / sc) * k0)), sy = Math.min(seg.h - 1, Math.floor((y0 + y / sc) * k0));
+      m[y * w + x] = seg.mask[sy * seg.w + sx];
+    }
+    const inner = erode(m, w, h, Math.max(3, Math.round(Math.min(w, h) * 0.015)));
+    // Ink: darker than its surroundings, from an integral image.
+    const ii = new Float64Array((w + 1) * (h + 1));
+    for (let y = 0; y < h; y++) { let row = 0; for (let x = 0; x < w; x++) { row += g[y * w + x]; ii[(y + 1) * (w + 1) + x + 1] = ii[y * (w + 1) + x + 1] + row; } }
+    const R = 7, ink = new Uint8Array(w * h);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      if (!inner[y * w + x]) continue;
+      const ax = Math.max(0, x - R), ay = Math.max(0, y - R), bx = Math.min(w, x + R + 1), by = Math.min(h, y + R + 1);
+      const mean = (ii[by * (w + 1) + bx] - ii[ay * (w + 1) + bx] - ii[by * (w + 1) + ax] + ii[ay * (w + 1) + ax]) / ((bx - ax) * (by - ay));
+      if (g[y * w + x] < mean - 18) ink[y * w + x] = 1;
+    }
+    const all = components(ink, w, h).comps.filter(c => { const hh = c.y1 - c.y0 + 1; return hh >= 3 && hh <= 60 && c.area >= 4; });
+    if (all.length < 40) return null;
+    // Boxes as seen after k anticlockwise quarter turns.
+    const turned = k => all.map(c => k === 0 ? [c.x0, c.y0, c.x1, c.y1] : k === 2 ? [w - 1 - c.x1, h - 1 - c.y1, w - 1 - c.x0, h - 1 - c.y0]
+      : k === 1 ? [c.y0, w - 1 - c.x1, c.y1, w - 1 - c.x0] : [h - 1 - c.y1, c.x0, h - 1 - c.y0, c.x1]);
+    // Lines from the gaps between them: rows covered by some mark, split
+    // where a row is empty. Grouping by each mark's centre instead splits a
+    // line in two, since a "b" sits higher than an "o" -- which is exactly
+    // the difference being measured.
+    // A box carries several columns of print side by side, so this is done in
+    // vertical strips a few dozen letters wide.
+    const lines = boxes => {
+      const hs = boxes.map(b => b[3] - b[1] + 1).sort((a, b) => a - b), medH = hs[hs.length >> 1];
+      // Where the strip edges fall changes which words are cut off a line,
+      // so three offsets are pooled.
+      const sw = Math.max(40, 30 * medH), out = [];
+      for (const phase of [0, 1 / 3, 2 / 3]) {
+        const strips = new Map();
+        for (const b of boxes) { const k = Math.floor(((b[0] + b[2]) / 2 + phase * sw) / sw); if (!strips.has(k)) strips.set(k, []); strips.get(k).push(b); }
+        for (const group of strips.values()) out.push(...stripLines(group, medH));
+      }
+      return { lines: out, medH };
+    };
+    const stripLines = (boxes, medH) => {
+      const H2 = Math.max(...boxes.map(b => b[3])) + 2, cover = new Int32Array(H2);
+      for (const b of boxes) for (let y = b[1]; y <= b[3]; y++) cover[y]++;
+      const runs = []; let start = -1;
+      for (let y = 0; y < H2; y++) { if (cover[y] > 0 && start < 0) start = y; if (cover[y] === 0 && start >= 0) { runs.push([start, y - 1]); start = -1; } }
+      const rowOf = new Int32Array(H2).fill(-1); runs.forEach(([a, b], i) => { for (let y = a; y <= b; y++) rowOf[y] = i; });
+      const groups = runs.map(() => []);
+      for (const b of boxes) { const r = rowOf[Math.round((b[1] + b[3]) / 2)]; if (r >= 0) groups[r].push(b); }
+      // A run much taller than a letter is several lines run together, or a
+      // logo: no use for reading the baseline.
+      return groups.filter((g, i) => g.length >= 4 && runs[i][1] - runs[i][0] <= 2.6 * medH);
+    };
+    const lin = k => { const L = lines(turned(k)).lines; return L.length ? L.reduce((a, l) => a + l.length, 0) / L.length : 0; };
+    const lh = lin(0), lv = lin(1);
+    let cands;
+    if (lh >= 1.3 * lv) cands = [0, 2]; else if (lv >= 1.3 * lh) cands = [1, 3]; else return null;
+    const updown = k => { const { lines: L, medH } = lines(turned(k)); let up = 0, dn = 0, n = 0;
+      for (const l of L) { const tops = l.map(b => b[1]).sort((a, b) => a - b), bots = l.map(b => b[3]).sort((a, b) => a - b);
+        const mt = tops[tops.length >> 1], mb = bots[bots.length >> 1];
+        for (const b of l) { up += Math.max(0, mt - b[1]); dn += Math.max(0, b[3] - mb); n++; } }
+      return { ratio: up / Math.max(dn, 1e-6), n, lines: L.length, medH }; };
+    const a = updown(cands[0]), b = updown(cands[1]);
+    if (a.n < 60 || a.lines < 6 || a.medH < 6) return null;
+    // The two directions are mirror images of each other; turn only when one
+    // reads clearly better than the other.
+    const rel = a.ratio / Math.max(b.ratio, 1e-6);
+    if (rel >= 2 && a.ratio >= 1.6) return cands[0];
+    if (rel <= 1 / 2 && b.ratio >= 1.6) return cands[1];
+    return null;
   }
 
   // ---------- framing and rendering ---------------------------------------
@@ -700,7 +862,11 @@ const PF = (() => {
     };
     const fits = (x0, y0, cw, ch) => inside(x0, y0) && inside(x0 + cw, y0) && inside(x0, y0 + ch) && inside(x0 + cw, y0 + ch) && clean(x0, y0, cw, ch);
     const sw = sub.x1 - sub.x0, sh = sub.y1 - sub.y0, scx = (sub.x0 + sub.x1) / 2, scy = (sub.y0 + sub.y1) / 2;
-    const ratios = ratioPref ? [ratioPref] : (ratioList || RATIOS);
+    let ratios = ratioPref ? [ratioPref] : (ratioList || RATIOS);
+    // A long box (a watch box is three times as wide as it is tall) does not
+    // fit any of the usual shapes without cutting it or drowning it in
+    // table: give it a frame of its own proportions.
+    if (!ratioPref && !ratioList) { const own = sw / sh; if (own > 2.6 || own < 1 / 2.6) ratios = ratios.concat([Math.max(1 / 3, Math.min(3, own))]); }
     const opts = ratios.map(r => { const cw = Math.max(sw / fill, r * sh / fill); return { r, cw, ch: cw / r, waste: cw * (cw / r) - sw * sh }; }).sort((a, b) => a.waste - b.waste);
     // Centred first: a smaller margin around a centred product reads better
     // than a generous one with the product pushed to the side. Only when no
@@ -788,14 +954,17 @@ const PF = (() => {
           // is one edge, and which one says how it should stand: the long
           // side (buttons) stands vertical, the short bottom edge (the port)
           // lies horizontal. The side view is about twice as long for the
-          // same thickness. The arm then picks between the two positions
+          // same thickness; on the seller's photos, with reflections and
+          // fingers thickening the edge, they measured 3.4 and 5.8-6.8. The arm then picks between the two positions
           // left: it reaches in from below, never from above.
-          const pts = []; for (const c of fm.core) pts.push(...rowPoints(c.rows));
-          const r = minAreaRect(pts), a = fm.armSides;
+          // The phone is the biggest piece; fingernails, which are too pale to
+          // pass for skin, come out as small pieces beside it and would skew
+          // its proportions.
+          const r = minAreaRect(rowPoints(fm.core[0].rows)), a = fm.armSides;
           if (r && Math.max(a.top, a.bottom, a.left, a.right) >= 0.05) {
             const aspect = Math.max(r.w, r.h) / Math.max(Math.min(r.w, r.h), 1);
             const long = r.w >= r.h ? [r.ux, r.uy] : [-r.uy, r.ux];
-            const wantVertical = aspect >= 6, longVertical = Math.abs(long[1]) > Math.abs(long[0]);
+            const wantVertical = aspect >= 4.5, longVertical = Math.abs(long[1]) > Math.abs(long[0]);
             const bottomAfter = ["bottom", "left", "top", "right"], topAfter = ["top", "right", "bottom", "left"];
             let bestK = 0, bestScore = -Infinity;
             for (let k = 0; k < 4; k++) {
@@ -806,7 +975,11 @@ const PF = (() => {
             report.turnCw = ((4 - bestK) % 4) * 90;
           }
           report.turnWhy = "hand";
-        } else if (!sure) report.turnUnsure = t.why;
+        } else if (!sure) {
+          const k = textTurn(img, W, H, seg);
+          if (k != null) { report.turnCw = ((4 - k) % 4) * 90; report.turnWhy = "text"; }
+          else report.turnUnsure = "no se ve la cámara ni la Dynamic Island, y el texto es demasiado pequeño para saber cuál es arriba (con el original del carrete suele bastar)";
+        }
       }
       // Held in a hand, the phone is what has to stand straight, not the
       // outline of the hand around it.
@@ -884,7 +1057,7 @@ const fmtDeg = a => (a > 0 ? "+" : "") + a.toFixed(1).replace(".", ",") + "°";
 
 function chipsFor(rep) {
   const out = [];
-  if (rep.turnCw) out.push(["girada " + rep.turnCw + "°" + (rep.turnWhy === "manual" ? " a mano" : rep.turnWhy === "camera" ? " · cámara" : rep.turnWhy === "island" ? " · Dynamic Island" : rep.turnWhy === "hand" ? " · por la mano" : ""), true]);
+  if (rep.turnCw) out.push(["girada " + rep.turnCw + "°" + (rep.turnWhy === "manual" ? " a mano" : rep.turnWhy === "camera" ? " · cámara" : rep.turnWhy === "island" ? " · Dynamic Island" : rep.turnWhy === "hand" ? " · por la mano" : rep.turnWhy === "text" ? " · por el texto" : ""), true]);
   out.push([Math.abs(rep.angle) >= 0.05 ? "enderezada " + fmtDeg(rep.angle) : "ya estaba recta", Math.abs(rep.angle) >= 0.05]);
   if (rep.hand) out.push(["en la mano", false]);
   if (rep.dropped) out.push(["fuera " + rep.dropped + (rep.dropped === 1 ? " objeto" : " objetos"), true]);
