@@ -405,6 +405,7 @@ const PF = (() => {
     const k = Math.max(3, Math.round(Math.min(w, h) * 0.012) | 1), r = (k - 1) >> 1;
     raw = erode(erode(dilate(dilate(raw, w, h, r), w, h, r), w, h, r), w, h, r);
     raw = dilate(erode(raw, w, h, r), w, h, r);
+    const notSurface = raw;
     const mask = fillHoles(raw, w, h);
     let cov = 0; for (let i = 0; i < n; i++) cov += mask[i]; cov /= n;
     const bg = borderColour(rgba, bidx);
@@ -423,11 +424,78 @@ const PF = (() => {
     const coverage = kc / n;
     if (coverage < 0.004 || coverage > 0.85) return { ok: false, why: "la zona del producto no es creíble", bg };
     for (const c of kept) { c.rect = minAreaRect(rowPoints(c.rows)); c.rectangularity = c.rect ? c.area / Math.max(c.rect.w * c.rect.h, 1) : 0; }
-    return { ok: true, mask: keep, kept, dropped: comps.length - kept.length, w, h, bg };
+    return { ok: true, mask: keep, kept, dropped: comps.length - kept.length, w, h, bg, notSurface };
   }
   function borderColour(rgba, idx) {
     const r = [], g = [], b = []; for (let t = 0; t < idx.length; t += 7) { const j = idx[t] * 4; r.push(rgba[j]); g.push(rgba[j + 1]); b.push(rgba[j + 2]); }
     return [median(r), median(g), median(b)];
+  }
+
+  // ---------- what the frame may show -------------------------------------
+  // The listing photo should show the table, the product and, if it is held,
+  // the hand -- nothing else. Anything that is neither table nor skin and
+  // comes in from the edge of the photo (a sleeve, the floor, a box corner, a
+  // charger) is something the frame must leave out, even if that means
+  // cutting through the wrist.
+  function skinMask(rgba, w, h) {
+    const m = new Uint8Array(w * h);
+    for (let i = 0, j = 0; i < m.length; i++, j += 4) {
+      const R = rgba[j], G = rgba[j + 1], B = rgba[j + 2];
+      const Y = 0.299 * R + 0.587 * G + 0.114 * B, Cr = (R - Y) * 0.713 + 128, Cb = (B - Y) * 0.564 + 128;
+      m[i] = R > 80 && R > G && G >= B * 0.8 && Cr >= 136 && Cr <= 178 && Cb >= 78 && Cb <= 128 ? 1 : 0;
+    }
+    return dilate(erode(erode(dilate(m, w, h, 2), w, h, 2), w, h, 1), w, h, 1);
+  }
+  function framingMasks(work, seg) {
+    const { w, h } = work, n = w * h, margin = Math.max(2, Math.round(Math.min(w, h) * 0.005));
+    const touches = c => c.x0 <= margin || c.y0 <= margin || c.x1 >= w - 1 - margin || c.y1 >= h - 1 - margin;
+    // Skin, made solid: shadows across a palm do not pass a colour test, and
+    // without filling them the product would stay joined to the sleeve.
+    const raw = skinMask(work.rgba, w, h);
+    for (let i = 0; i < n; i++) raw[i] = raw[i] && seg.notSurface[i] ? 1 : 0;
+    const skin = fillHoles(erode(dilate(raw, w, h, 4), w, h, 4), w, h);
+    const sk = components(skin, w, h), bigSkin = sk.comps.filter(c => c.area >= n * 0.03);
+    const bigIds = new Set(bigSkin.map(c => c.id)), handZone = new Uint8Array(n);
+    for (let i = 0; i < n; i++) if (bigIds.has(sk.lab[i])) handZone[i] = 1;
+    const near = dilate(handZone, w, h, 6);
+
+    const split = zone => {
+      const other = new Uint8Array(n); for (let i = 0; i < n; i++) other[i] = seg.notSurface[i] && !zone[i] ? 1 : 0;
+      const r = components(other, w, h); r.comps.sort((a, b) => b.area - a.area); return r;
+    };
+    // A hand only counts as one when it holds the product: skin touching
+    // something that lies wholly inside the photo. A patch of pale wood far
+    // from the phone is not a hand.
+    let hand = false, core = null, lab, comps;
+    if (bigSkin.length) {
+      ({ lab, comps } = split(dilate(handZone, w, h, 2)));
+      const held = comps.filter(c => !touches(c) && c.area >= n * 0.002 && touchesZone(c, lab, near, w));
+      if (held.length) { hand = true; const big = held[0]; core = held.filter(c => c.area >= big.area * 0.04); }
+    }
+    if (!hand) ({ lab, comps } = split(new Uint8Array(n)));
+
+    const bad = new Set();
+    if (hand) { for (const c of comps) if (touches(c) && c.area >= n * 0.0015) bad.add(c.id); }
+    else {
+      // The product itself may run off the edge (a close-up); what is left
+      // out is whatever reaches the edge away from it.
+      for (const c of comps) {
+        if (!touches(c) || c.area < n * 0.0015) continue;
+        let onProduct = 0; c.rows.forEach((r, y) => { for (let x = r[0]; x <= r[1]; x += 3) if (seg.mask[y * w + x] && lab[y * w + x] === c.id) onProduct++; });
+        if (onProduct < c.area / 6) bad.add(c.id);
+      }
+    }
+    const forbidden = new Uint8Array(n);
+    for (let i = 0; i < n; i++) if (bad.has(lab[i]) && !(hand ? handZone[i] : seg.mask[i])) forbidden[i] = 1;
+    if (core) for (const c of core) { c.rect = minAreaRect(rowPoints(c.rows)); c.rectangularity = c.rect ? c.area / Math.max(c.rect.w * c.rect.h, 1) : 0; }
+    let coreMask = null;
+    if (core) { coreMask = new Uint8Array(n); const ids = new Set(core.map(c => c.id)); for (let i = 0; i < n; i++) if (ids.has(lab[i])) coreMask[i] = 1; }
+    return { hand, core, coreMask, forbidden: dilate(forbidden, w, h, 2) };
+  }
+  function touchesZone(c, lab, zone, w) {
+    let hit = false;
+    c.rows.forEach((r, y) => { if (hit) return; for (let x = r[0]; x <= r[1]; x++) { const i = y * w + x; if (lab[i] === c.id && zone[i]) { hit = true; break; } } });
+    return hit;
   }
 
   // ---------- straightening ----------------------------------------------
@@ -599,14 +667,22 @@ const PF = (() => {
   }
 
   // ---------- framing and rendering ---------------------------------------
-  function planCrop(sub, W, H, A, fill, ratioPref) {
+  function planCrop(sub, W, H, A, fill, ratioPref, forbid, ratioList) {
     // Rotated space: the original turned anticlockwise by A around its centre.
     const c = Math.cos(A), s = Math.sin(A), cx = W / 2, cy = H / 2;
     const inside = (x, y) => { const ox = c * x - s * y + cx, oy = s * x + c * y + cy, tol = 0.012 * Math.max(W, H);
       return ox >= -tol && oy >= -tol && ox <= W + tol && oy <= H + tol; };
-    const fits = (x0, y0, cw, ch) => inside(x0, y0) && inside(x0 + cw, y0) && inside(x0, y0 + ch) && inside(x0 + cw, y0 + ch);
+    const SAMPLES = 24;
+    const clean = (x0, y0, cw, ch) => {
+      if (!forbid) return true;
+      let hits = 0;
+      for (let j = 0; j <= SAMPLES; j++) for (let i = 0; i <= SAMPLES; i++)
+        if (forbid(x0 + cw * i / SAMPLES, y0 + ch * j / SAMPLES) && ++hits > 1) return false;
+      return true;
+    };
+    const fits = (x0, y0, cw, ch) => inside(x0, y0) && inside(x0 + cw, y0) && inside(x0, y0 + ch) && inside(x0 + cw, y0 + ch) && clean(x0, y0, cw, ch);
     const sw = sub.x1 - sub.x0, sh = sub.y1 - sub.y0, scx = (sub.x0 + sub.x1) / 2, scy = (sub.y0 + sub.y1) / 2;
-    const ratios = ratioPref ? [ratioPref] : RATIOS;
+    const ratios = ratioPref ? [ratioPref] : (ratioList || RATIOS);
     const opts = ratios.map(r => { const cw = Math.max(sw / fill, r * sh / fill); return { r, cw, ch: cw / r, waste: cw * (cw / r) - sw * sh }; }).sort((a, b) => a.waste - b.waste);
     let best = null;
     for (const o of opts) {
@@ -680,15 +756,35 @@ const PF = (() => {
         report.turnCw = ((4 - t.turns) % 4) * 90; report.turnWhy = sure ? t.why : "";
         if (!sure) report.turnUnsure = t.why;
       }
-      report.angle = estimateAngle(work, seg);
+      const fm = framingMasks(work, seg), held = fm.hand && fm.core;
+      // Held in a hand, the phone is what has to stand straight, not the
+      // outline of the hand around it.
+      report.angle = held ? estimateAngle(work, { kept: fm.core, mask: fm.coreMask }) : estimateAngle(work, seg);
       A = (-report.turnCw + report.angle) * Math.PI / 180;
       // Subject bounds in rotated, full-resolution space.
       const c = Math.cos(A), s = Math.sin(A), k = work.k, cx = W / 2, cy = H / 2;
+      const subject = held ? fm.core : seg.kept;
+      const forbid = (x, y) => {
+        const ox = (c * x - s * y + cx) * k, oy = (s * x + c * y + cy) * k;
+        const ix = Math.floor(ox), iy = Math.floor(oy);
+        return ix >= 0 && iy >= 0 && ix < seg.w && iy < seg.h && fm.forbidden[iy * seg.w + ix] === 1;
+      };
       let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-      for (const comp of seg.kept) comp.rows.forEach((r, y) => { for (const x of [r[0], r[1] + 1]) for (const yy of [y, y + 1]) {
+      for (const comp of subject) comp.rows.forEach((r, y) => { for (const x of [r[0], r[1] + 1]) for (const yy of [y, y + 1]) {
         const px = x / k - cx, py = yy / k - cy, rx = c * px + s * py, ry = -s * px + c * py;
         if (rx < x0) x0 = rx; if (rx > x1) x1 = rx; if (ry < y0) y0 = ry; if (ry > y1) y1 = ry; } });
-      crop = planCrop({ x0, y0, x1, y1 }, W, H, A, opts.fill, opts.ratio);
+      const sub = { x0, y0, x1, y1 };
+      // Held in a hand, the hand is part of the picture: the product gets
+      // about half the frame, and the frame is squarish so the hand fits.
+      const fill = held ? Math.min(opts.fill, 0.5) : opts.fill;
+      const shapes = held ? [5 / 4, 1, 4 / 5] : null;
+      crop = planCrop(sub, W, H, A, fill, opts.ratio, forbid, shapes);
+      if (crop.overflow || crop.trimmed) {
+        // Nothing clean fits: better a little clutter than a cut product.
+        crop = planCrop(sub, W, H, A, fill, opts.ratio, null, shapes);
+        report.notes.push("No se ha podido dejar fuera todo lo que rodea al producto sin cortarlo.");
+      }
+      if (held) report.hand = true;
       if (crop.trimmed) report.notes.push("El producto se sale de la foto, así que el encuadre corta un poco por ese lado.");
       else if (crop.f < 0.6 && !crop.overflow) report.notes.push("El producto está muy cerca del borde de la foto: se ha dejado menos margen del pedido.");
       if (crop.overflow) report.notes.push("El producto toca el borde de la foto: las esquinas se han rellenado con el color del fondo.");
@@ -736,6 +832,7 @@ function chipsFor(rep) {
   const out = [];
   if (rep.turnCw) out.push(["girada " + rep.turnCw + "°" + (rep.turnWhy === "manual" ? " a mano" : rep.turnWhy === "camera" ? " · cámara" : rep.turnWhy === "island" ? " · Dynamic Island" : ""), true]);
   out.push([Math.abs(rep.angle) >= 0.05 ? "enderezada " + fmtDeg(rep.angle) : "ya estaba recta", Math.abs(rep.angle) >= 0.05]);
+  if (rep.hand) out.push(["en la mano", false]);
   if (rep.dropped) out.push(["fuera " + rep.dropped + (rep.dropped === 1 ? " objeto" : " objetos"), true]);
   out.push([rep.size[0] + "×" + rep.size[1] + " px", false]);
   return out;
