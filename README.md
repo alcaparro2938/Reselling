@@ -12,6 +12,17 @@ sobre una.
 Pensado para vender móviles, sobre todo iPhone, pero funciona con cualquier
 producto fotografiado desde arriba.
 
+## La web app (sin servidor)
+
+`web/photofix.html` es la misma idea portada a JavaScript: corre entera en el
+navegador del móvil, así que no hace falta tener nada encendido y las fotos no
+salen del dispositivo. Decide igual que la versión en Python con las fotos de
+referencia (los mismos giros en las siete). No recorta con GrabCut ni cambia el
+fondo: solo pone de pie, endereza, recorta y da un retoque suave de luz.
+
+Está publicada como artifact en claude.ai. Para servirla en otro sitio, basta
+con subir `photofix.html` y `ejemplo.jpg` juntos a cualquier hosting estático.
+
 ## Ponerlo de pie
 
 Si el móvil está tumbado en la foto o boca abajo, se gira para que quede

@@ -1,0 +1,908 @@
+<title>Photofix</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;700;800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one column of photo cards under a sticky header, a fixed action bar at the bottom; two columns on wide screens. */
+:root {
+  --bg: #f3f4f2;
+  --surface: #ffffff;
+  --ink: #18201c;
+  --muted: #5f6b65;
+  --line: #dde2de;
+  --accent: #17684f;
+  --accent-ink: #ffffff;
+  --accent-soft: #e2efe9;
+  --warn: #8a5a00;
+  --warn-soft: #fbf1dc;
+  --danger: #a3341b;
+  --shade: rgba(16, 24, 20, .62);
+  --font-display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --font-body: "Inter", -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-data: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --radius: 14px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #121614; --surface: #1b211e; --ink: #e8ece9; --muted: #9aa6a0;
+    --line: #2c3430; --accent: #4fbf96; --accent-ink: #0c1712; --accent-soft: #1f3a2f;
+    --warn: #e7b65c; --warn-soft: #33290f; --danger: #f08b70; --shade: rgba(0, 0, 0, .66);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #121614; --surface: #1b211e; --ink: #e8ece9; --muted: #9aa6a0;
+  --line: #2c3430; --accent: #4fbf96; --accent-ink: #0c1712; --accent-soft: #1f3a2f;
+  --warn: #e7b65c; --warn-soft: #33290f; --danger: #f08b70; --shade: rgba(0, 0, 0, .66);
+  color-scheme: dark;
+}
+html { -webkit-text-size-adjust: 100%; }
+[hidden] { display: none !important; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--font-body);
+  font-size: 15px; line-height: 1.45;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 0 calc(96px + env(safe-area-inset-bottom, 0px));
+}
+body::before {
+  content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px);
+  z-index: 10; background: var(--bg);
+}
+.wrap { max-width: 1040px; margin: 0 auto; display: grid; gap: 16px; }
+header {
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--bg);
+  padding-block: 14px 10px; display: flex; align-items: center; gap: 12px;
+  border-bottom: 1px solid var(--line);
+}
+.mark {
+  width: 34px; height: 34px; border-radius: 9px; background: var(--accent);
+  display: grid; place-items: center; flex: none;
+}
+.mark svg { width: 20px; height: 20px; }
+header h1 { margin: 0; font-family: var(--font-display); font-weight: 800; font-size: 20px; letter-spacing: -.01em; }
+header p { margin: 0; color: var(--muted); font-size: 13px; }
+
+.pick {
+  display: grid; gap: 4px; place-items: center; text-align: center; cursor: pointer;
+  border: 2px dashed var(--line); border-radius: var(--radius); background: var(--surface);
+  padding-block: 22px; padding-inline: 16px;
+}
+.pick:hover, .pick.over { border-color: var(--accent); background: var(--accent-soft); }
+.pick:focus-within { outline: 3px solid var(--accent); outline-offset: 2px; }
+.pick strong { font-family: var(--font-display); font-size: 18px; font-weight: 700; }
+.pick span { color: var(--muted); font-size: 13px; }
+.pick input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+
+details.settings { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+details.settings summary {
+  cursor: pointer; list-style: none; padding: 13px 16px; font-weight: 600;
+  display: flex; justify-content: space-between; align-items: center;
+}
+details.settings summary::-webkit-details-marker { display: none; }
+details.settings summary::after { content: "Mostrar"; color: var(--muted); font-weight: 500; font-size: 13px; }
+details.settings[open] summary::after { content: "Ocultar"; }
+.grid-set { display: grid; gap: 14px; padding: 0 16px 16px; grid-template-columns: 1fr; }
+@media (min-width: 640px) { .grid-set { grid-template-columns: 1fr 1fr; } }
+.grid-set label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+.grid-set select, .grid-set input[type=range] { width: 100%; }
+.grid-set select {
+  font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line);
+  border-radius: 10px; padding: 9px 10px; min-height: 42px;
+}
+.grid-set .apply { grid-column: 1 / -1; }
+.val { font-family: var(--font-data); color: var(--ink); }
+.check { display: flex; gap: 10px; align-items: center; font-size: 14px; color: var(--ink) !important; }
+
+.cards { display: grid; gap: 16px; grid-template-columns: 1fr; }
+@media (min-width: 760px) { .cards { grid-template-columns: 1fr 1fr; } }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; min-width: 0; }
+.stage { position: relative; background: var(--bg); display: grid; place-items: center; min-height: 220px; }
+.stage img { display: block; max-width: 100%; max-height: 64vh; width: auto; height: auto; object-fit: contain; -webkit-touch-callout: default; }
+.flip {
+  position: absolute; right: 8px; bottom: 8px; flex: none; min-height: 36px; padding: 6px 12px; font-size: 13px;
+  background: var(--shade); color: #fff; border-color: transparent; border-radius: 999px;
+}
+.tag {
+  position: absolute; top: 8px; font: 600 10px/1 var(--font-body); letter-spacing: .09em;
+  background: var(--shade); color: #fff; padding: 5px 8px; border-radius: 6px; pointer-events: none;
+}
+.tag.l { left: 8px; } .tag.r { right: 8px; }
+.tag.sample { background: var(--accent); color: var(--accent-ink); }
+.busy-veil {
+  position: absolute; inset: 0; display: grid; place-items: center; background: var(--shade);
+  color: #fff; font-weight: 600; font-size: 14px;
+}
+.body { padding: 12px 14px 14px; display: grid; gap: 6px; }
+.name { font-weight: 600; font-size: 14px; word-break: break-all; }
+.facts { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  font: 500 12px/1 var(--font-data); padding: 5px 8px; border-radius: 999px;
+  background: var(--bg); border: 1px solid var(--line); color: var(--ink);
+}
+.chip.on { background: var(--accent-soft); border-color: transparent; color: var(--accent); }
+.note { font-size: 13px; color: var(--warn); background: var(--warn-soft); border-radius: 8px; padding: 7px 9px; }
+.err { font-size: 13.5px; color: var(--danger); }
+.row { display: flex; gap: 8px; margin-top: 6px; }
+
+button {
+  font: inherit; font-weight: 600; font-size: 15px; padding: 10px 14px; min-height: 44px;
+  border-radius: 11px; border: 1px solid var(--accent); background: var(--accent);
+  color: var(--accent-ink); cursor: pointer; flex: 1;
+}
+button.ghost { background: transparent; color: var(--accent); }
+button:disabled { opacity: .45; cursor: default; }
+button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+.bar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 6; display: flex; gap: 10px; align-items: center;
+  padding-top: 10px; padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  background: var(--surface); border-top: 1px solid var(--line);
+}
+.bar .status { flex: 2; font-size: 13px; color: var(--muted); min-width: 0; }
+.bar button { flex: 1; max-width: 240px; }
+.hint { font-size: 13px; color: var(--muted); text-align: center; }
+@media (prefers-reduced-motion: no-preference) { .card { animation: rise .25s ease-out both; } }
+@keyframes rise { from { transform: translateY(6px); } to { transform: none; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--accent-ink)">
+        <rect x="7" y="3" width="10" height="18" rx="2.5"/><path d="M3 8V4h4M21 8V4h-4M3 16v4h4M21 16v4h-4"/>
+      </svg>
+    </div>
+    <div>
+      <h1>Photofix</h1>
+      <p>Pone el móvil de pie, lo endereza y lo centra. Las fotos no salen de tu dispositivo.</p>
+    </div>
+  </header>
+
+  <label class="pick" id="pick">
+    <input id="files" type="file" accept="image/*" multiple>
+    <strong>Elegir fotos</strong>
+    <span>Del carrete o hechas ahora. Mejor el original que una copia de WhatsApp.</span>
+  </label>
+
+  <details class="settings" id="settings">
+    <summary>Ajustes</summary>
+    <div class="grid-set">
+      <div>
+        <label for="fill">Tamaño del producto: <span class="val" id="fillv">78</span>%</label>
+        <input id="fill" type="range" min="50" max="95" value="78">
+      </div>
+      <div>
+        <label for="ratio">Formato</label>
+        <select id="ratio">
+          <option value="auto">Automático</option>
+          <option value="0.8">4:5</option>
+          <option value="1">1:1 cuadrado</option>
+          <option value="0.75">3:4</option>
+          <option value="0.6667">2:3</option>
+        </select>
+      </div>
+      <label class="check"><input id="upright" type="checkbox" checked> Poner el móvil de pie</label>
+      <label class="check"><input id="levels" type="checkbox" checked> Retoque suave de luz</label>
+      <button class="ghost apply" id="apply" type="button">Aplicar a todas</button>
+    </div>
+  </details>
+
+  <div class="cards" id="cards" aria-live="polite"></div>
+  <p class="hint" id="hint"></p>
+</div>
+
+<div class="bar">
+  <div class="status" id="status">Cargando el ejemplo…</div>
+  <button id="saveAll" type="button" disabled>Guardar todas</button>
+</div>
+
+<script>
+"use strict";
+/* ======================================================================
+   Engine: a JavaScript port of the photofix pipeline.
+   Segment the product against the colour of the frame border, decide which
+   way is up (camera corner or Dynamic Island), measure the tilt, then crop
+   around the product with a single resampling of the original pixels.
+   ====================================================================== */
+const PF = (() => {
+  const WORK = 900, ORIENT = 1200, MAX_OUT = 2000;
+  const BORDER_FRAC = 0.05, THRESH_K = 3.2;
+  const RATIOS = [2/3, 3/4, 4/5, 1, 5/4, 4/3, 3/2];
+  const PHONE_ASPECT = [1.8, 2.45], CANON_W = 300, BACK_MAX_MID = 0.03;
+
+  // ---------- pixels -----------------------------------------------------
+  function drawScaled(src, sw, sh, maxSide) {
+    const k = Math.min(1, maxSide / Math.max(sw, sh));
+    const w = Math.max(1, Math.round(sw * k)), h = Math.max(1, Math.round(sh * k));
+    const c = document.createElement("canvas"); c.width = w; c.height = h;
+    const ctx = c.getContext("2d", { willReadFrequently: true });
+    ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(src, 0, 0, w, h);
+    return { rgba: ctx.getImageData(0, 0, w, h).data, w, h, k };
+  }
+  function grayOf(rgba, w, h) {
+    const g = new Uint8Array(w * h);
+    for (let i = 0, j = 0; i < g.length; i++, j += 4)
+      g[i] = Math.round(0.299 * rgba[j] + 0.587 * rgba[j + 1] + 0.114 * rgba[j + 2]);
+    return g;
+  }
+  const refl = (i, n) => (i < 0 ? -i : i >= n ? 2 * n - 2 - i : i);
+  // Separable blur with OpenCV's fixed small Gaussian kernels.
+  function blur(src, w, h, taps) {
+    const r = (taps.length - 1) / 2, tmp = new Float32Array(w * h), out = new Float32Array(w * h);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      let s = 0; for (let t = -r; t <= r; t++) s += taps[t + r] * src[y * w + refl(x + t, w)];
+      tmp[y * w + x] = s;
+    }
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      let s = 0; for (let t = -r; t <= r; t++) s += taps[t + r] * tmp[refl(y + t, h) * w + x];
+      out[y * w + x] = s;
+    }
+    return out;
+  }
+  const K3 = [0.25, 0.5, 0.25], K5 = [0.0625, 0.25, 0.375, 0.25, 0.0625];
+  function gaussTaps(sigma) {
+    const r = Math.max(1, Math.ceil(sigma * 3)), t = [];
+    let s = 0; for (let i = -r; i <= r; i++) { const v = Math.exp(-(i * i) / (2 * sigma * sigma)); t.push(v); s += v; }
+    return t.map(v => v / s);
+  }
+  // CIELAB scaled as OpenCV's 8-bit Lab: L 0..255, a and b offset by 128.
+  function labOf(rgba, w, h) {
+    const n = w * h, ch = [0, 1, 2].map(c => { const a = new Float32Array(n); for (let i = 0; i < n; i++) a[i] = rgba[i * 4 + c]; return blur(a, w, h, K5); });
+    const L = new Float32Array(n), A = new Float32Array(n), B = new Float32Array(n);
+    const lin = v => { v /= 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+    const lut = new Float32Array(256); for (let i = 0; i < 256; i++) lut[i] = lin(i);
+    const f = t => (t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116);
+    for (let i = 0; i < n; i++) {
+      const r = lut[Math.max(0, Math.min(255, Math.round(ch[0][i])))], g = lut[Math.max(0, Math.min(255, Math.round(ch[1][i])))], b = lut[Math.max(0, Math.min(255, Math.round(ch[2][i])))];
+      const X = (0.4124 * r + 0.3576 * g + 0.1805 * b) / 0.95047, Y = 0.2126 * r + 0.7152 * g + 0.0722 * b, Z = (0.0193 * r + 0.1192 * g + 0.9505 * b) / 1.08883;
+      const fx = f(X), fy = f(Y), fz = f(Z);
+      L[i] = (116 * fy - 16) * 2.55; A[i] = 500 * (fx - fy) + 128; B[i] = 200 * (fy - fz) + 128;
+    }
+    return [L, A, B];
+  }
+  const median = arr => { const s = Float32Array.from(arr).sort(); return s.length ? s[s.length >> 1] : 0; };
+
+  // ---------- binary morphology (square structuring element) --------------
+  function dilate(m, w, h, r) {
+    if (r <= 0) return m.slice();
+    const t = new Uint8Array(w * h), o = new Uint8Array(w * h);
+    for (let y = 0; y < h; y++) { let last = -1e9; const row = y * w;
+      for (let x = 0; x < w; x++) { if (m[row + x]) last = x; if (x - last <= r) t[row + x] = 1; }
+      last = 1e9; for (let x = w - 1; x >= 0; x--) { if (m[row + x]) last = x; if (last - x <= r) t[row + x] = 1; } }
+    for (let x = 0; x < w; x++) { let last = -1e9;
+      for (let y = 0; y < h; y++) { if (t[y * w + x]) last = y; if (y - last <= r) o[y * w + x] = 1; }
+      last = 1e9; for (let y = h - 1; y >= 0; y--) { if (t[y * w + x]) last = y; if (last - y <= r) o[y * w + x] = 1; } }
+    return o;
+  }
+  function erode(m, w, h, r) {
+    // Outside the frame counts as foreground, as in OpenCV: the frame edge
+    // does not eat into an object touching it.
+    const inv = new Uint8Array(w * h); for (let i = 0; i < inv.length; i++) inv[i] = m[i] ? 0 : 1;
+    const d = dilate(inv, w, h, r); for (let i = 0; i < d.length; i++) d[i] = d[i] ? 0 : 1; return d;
+  }
+  function fillHoles(m, w, h) {
+    const seen = new Uint8Array(w * h), st = [];
+    const push = i => { if (!m[i] && !seen[i]) { seen[i] = 1; st.push(i); } };
+    for (let x = 0; x < w; x++) { push(x); push((h - 1) * w + x); }
+    for (let y = 0; y < h; y++) { push(y * w); push(y * w + w - 1); }
+    while (st.length) { const i = st.pop(), x = i % w, y = (i / w) | 0;
+      if (x > 0) push(i - 1); if (x < w - 1) push(i + 1); if (y > 0) push(i - w); if (y < h - 1) push(i + w); }
+    const o = new Uint8Array(w * h); for (let i = 0; i < o.length; i++) o[i] = seen[i] ? 0 : 1; return o;
+  }
+  // 8-connected components with area, bounds and per-row extents.
+  function components(m, w, h) {
+    const lab = new Int32Array(w * h), comps = [], st = [];
+    for (let s = 0; s < w * h; s++) {
+      if (!m[s] || lab[s]) continue;
+      const id = comps.length + 1, c = { id, area: 0, x0: w, y0: h, x1: -1, y1: -1, rows: new Map() };
+      lab[s] = id; st.push(s);
+      while (st.length) {
+        const i = st.pop(), x = i % w, y = (i / w) | 0; c.area++;
+        if (x < c.x0) c.x0 = x; if (x > c.x1) c.x1 = x; if (y < c.y0) c.y0 = y; if (y > c.y1) c.y1 = y;
+        const r = c.rows.get(y); if (!r) c.rows.set(y, [x, x]); else { if (x < r[0]) r[0] = x; if (x > r[1]) r[1] = x; }
+        for (let dy = -1; dy <= 1; dy++) { const yy = y + dy; if (yy < 0 || yy >= h) continue;
+          for (let dx = -1; dx <= 1; dx++) { const xx = x + dx; if (xx < 0 || xx >= w) continue;
+            const j = yy * w + xx; if (m[j] && !lab[j]) { lab[j] = id; st.push(j); } } }
+      }
+      comps.push(c);
+    }
+    return { lab, comps };
+  }
+
+  // ---------- geometry ----------------------------------------------------
+  function hull(pts) {
+    pts = pts.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    if (pts.length < 3) return pts;
+    const cross = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+    const lo = [], up = [];
+    for (const p of pts) { while (lo.length >= 2 && cross(lo[lo.length - 2], lo[lo.length - 1], p) <= 0) lo.pop(); lo.push(p); }
+    for (let i = pts.length - 1; i >= 0; i--) { const p = pts[i]; while (up.length >= 2 && cross(up[up.length - 2], up[up.length - 1], p) <= 0) up.pop(); up.push(p); }
+    lo.pop(); up.pop(); return lo.concat(up);
+  }
+  function rowPoints(rows) { const p = []; rows.forEach((r, y) => { p.push([r[0], y]); if (r[1] !== r[0]) p.push([r[1], y]); }); return p; }
+  // Minimum-area enclosing rectangle by rotating calipers over the hull.
+  function minAreaRect(points) {
+    const hp = hull(points);
+    if (hp.length < 3) return null;
+    let best = null;
+    for (let i = 0; i < hp.length; i++) {
+      const a = hp[i], b = hp[(i + 1) % hp.length], dx = b[0] - a[0], dy = b[1] - a[1], len = Math.hypot(dx, dy);
+      if (len < 1e-9) continue;
+      const ux = dx / len, uy = dy / len;
+      let mnU = Infinity, mxU = -Infinity, mnV = Infinity, mxV = -Infinity;
+      for (const p of hp) { const u = p[0] * ux + p[1] * uy, v = -p[0] * uy + p[1] * ux;
+        if (u < mnU) mnU = u; if (u > mxU) mxU = u; if (v < mnV) mnV = v; if (v > mxV) mxV = v; }
+      const area = (mxU - mnU) * (mxV - mnV);
+      if (!best || area < best.area) {
+        const cu = (mnU + mxU) / 2, cv = (mnV + mxV) / 2;
+        best = { area, cx: cu * ux - cv * uy, cy: cu * uy + cv * ux, w: mxU - mnU, h: mxV - mnV, ux, uy };
+      }
+    }
+    return best;
+  }
+  function boxPoints(r) {
+    const ax = r.ux * r.w / 2, ay = r.uy * r.w / 2, bx = -r.uy * r.h / 2, by = r.ux * r.h / 2;
+    return [[r.cx - ax - bx, r.cy - ay - by], [r.cx + ax - bx, r.cy + ay - by], [r.cx + ax + bx, r.cy + ay + by], [r.cx - ax + bx, r.cy - ay + by]];
+  }
+  // Tilt of a rectangle folded into (-45, 45]: positive means the content
+  // has to turn anticlockwise to stand straight.
+  function foldDeg(rad) { let d = (rad * 180 / Math.PI) % 90; if (d < 0) d += 90; if (d > 45) d -= 90; return d; }
+  const dev90 = (a, b) => Math.abs((((a - b + 45) % 90) + 90) % 90 - 45);
+  function circMean90(angles, weights) {
+    let re = 0, im = 0;
+    angles.forEach((a, i) => { re += weights[i] * Math.cos(a * 4 * Math.PI / 180); im += weights[i] * Math.sin(a * 4 * Math.PI / 180); });
+    return Math.hypot(re, im) < 1e-9 ? 0 : Math.atan2(im, re) * 180 / Math.PI / 4;
+  }
+
+  // ---------- edges (Canny, as OpenCV computes it) -------------------------
+  function canny(g, w, h, lo, hi) {
+    const n = w * h, gx = new Int32Array(n), gy = new Int32Array(n), mag = new Int32Array(n);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const xm = refl(x - 1, w), xp = refl(x + 1, w), ym = refl(y - 1, h), yp = refl(y + 1, h);
+      const a = g[ym * w + xm], b = g[ym * w + x], c = g[ym * w + xp], d = g[y * w + xm], f = g[y * w + xp], p = g[yp * w + xm], q = g[yp * w + x], r = g[yp * w + xp];
+      const dx = (c + 2 * f + r) - (a + 2 * d + p), dy = (p + 2 * q + r) - (a + 2 * b + c), i = y * w + x;
+      gx[i] = dx; gy[i] = dy; mag[i] = Math.abs(dx) + Math.abs(dy);
+    }
+    const out = new Uint8Array(n), strong = [], TG22 = 0.4142135623730951;
+    for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+      const i = y * w + x, m = mag[i]; if (m <= lo) continue;
+      const ax = Math.abs(gx[i]), ay = Math.abs(gy[i]);
+      let n1, n2;
+      if (ay <= ax * TG22) { n1 = mag[i - 1]; n2 = mag[i + 1]; }
+      else if (ay >= ax / TG22) { n1 = mag[i - w]; n2 = mag[i + w]; }
+      else { const s = (gx[i] ^ gy[i]) < 0 ? -1 : 1; n1 = mag[i - w - s]; n2 = mag[i + w + s]; }
+      if (m > n1 && m >= n2) { out[i] = 1; if (m > hi) { out[i] = 2; strong.push(i); } }
+    }
+    while (strong.length) { const i = strong.pop();
+      for (const d of [-w - 1, -w, -w + 1, -1, 1, w - 1, w, w + 1]) { const j = i + d; if (out[j] === 1) { out[j] = 2; strong.push(j); } } }
+    for (let i = 0; i < n; i++) out[i] = out[i] === 2 ? 1 : 0;
+    return out;
+  }
+  const blurU8 = (g, w, h, taps) => { const f = blur(g, w, h, taps), o = new Uint8Array(f.length); for (let i = 0; i < f.length; i++) o[i] = Math.round(f[i]); return o; };
+
+  // ---------- segmentation ------------------------------------------------
+  function borderIdx(w, h, frac) {
+    const by = Math.max(2, Math.round(h * frac)), bx = Math.max(2, Math.round(w * frac)), idx = [];
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (y < by || y >= h - by || x < bx || x >= w - bx) idx.push(y * w + x);
+    return idx;
+  }
+  function segment(work) {
+    const { rgba, w, h } = work, n = w * h;
+    const lab = labOf(rgba, w, h), bidx = borderIdx(w, h, BORDER_FRAC);
+    const med = [], sig = [];
+    for (const ch of lab) { const s = bidx.map(i => ch[i]), m = median(s); med.push(m); sig.push(Math.max(1.5, 1.4826 * median(s.map(v => Math.abs(v - m))))); }
+    const wts = [0.6, 1, 1];
+    let raw = new Uint8Array(n);
+    for (let i = 0; i < n; i++) {
+      let d = 0; for (let c = 0; c < 3; c++) { const z = (lab[c][i] - med[c]) / sig[c] * wts[c]; d += z * z; }
+      raw[i] = Math.sqrt(d) > THRESH_K ? 1 : 0;
+    }
+    const k = Math.max(3, Math.round(Math.min(w, h) * 0.012) | 1), r = (k - 1) >> 1;
+    raw = erode(erode(dilate(dilate(raw, w, h, r), w, h, r), w, h, r), w, h, r);
+    raw = dilate(erode(raw, w, h, r), w, h, r);
+    const mask = fillHoles(raw, w, h);
+    let cov = 0; for (let i = 0; i < n; i++) cov += mask[i]; cov /= n;
+    const bg = borderColour(rgba, bidx);
+    if (cov < 0.004) return { ok: false, why: "no se distingue ningún objeto del fondo", bg };
+    if (cov > 0.9) return { ok: false, why: "el fondo no es lo bastante uniforme para separar el producto", bg };
+
+    const { lab: labels, comps } = components(mask, w, h);
+    const margin = Math.max(2, Math.round(Math.min(w, h) * 0.005));
+    comps.forEach(c => { c.touches = c.x0 <= margin || c.y0 <= margin || c.x1 >= w - 1 - margin || c.y1 >= h - 1 - margin; });
+    comps.sort((a, b) => b.area - a.area);
+    let sig2 = comps.filter(c => c.area >= n * 0.0015); if (!sig2.length) sig2 = comps.slice(0, 1);
+    const main = sig2[0], kept = [main];
+    for (const c of sig2.slice(1)) if (c.area >= main.area * 0.04 && !c.touches) kept.push(c);
+    const keep = new Uint8Array(n), ids = new Set(kept.map(c => c.id));
+    let kc = 0; for (let i = 0; i < n; i++) if (ids.has(labels[i])) { keep[i] = 1; kc++; }
+    const coverage = kc / n;
+    if (coverage < 0.004 || coverage > 0.85) return { ok: false, why: "la zona del producto no es creíble", bg };
+    for (const c of kept) { c.rect = minAreaRect(rowPoints(c.rows)); c.rectangularity = c.rect ? c.area / Math.max(c.rect.w * c.rect.h, 1) : 0; }
+    return { ok: true, mask: keep, kept, dropped: comps.length - kept.length, w, h, bg };
+  }
+  function borderColour(rgba, idx) {
+    const r = [], g = [], b = []; for (let t = 0; t < idx.length; t += 7) { const j = idx[t] * 4; r.push(rgba[j]); g.push(rgba[j + 1]); b.push(rgba[j + 2]); }
+    return [median(r), median(g), median(b)];
+  }
+
+  // ---------- straightening ----------------------------------------------
+  function angleFromComponents(kept) {
+    const rects = kept.filter(c => c.rect && c.rectangularity >= 0.85);
+    if (!rects.length) return [0, 0];
+    const ang = rects.map(c => foldDeg(Math.atan2(c.rect.uy, c.rect.ux)));
+    const wt = rects.map(c => Math.sqrt(c.area) * c.rectangularity ** 2);
+    let best = 0, bestCost = Infinity;
+    ang.forEach((a, i) => { const cost = ang.reduce((s, b, j) => s + wt[j] * dev90(b, a), 0); if (cost < bestCost) { bestCost = cost; best = i; } });
+    const inl = ang.map(a => dev90(a, ang[best]) <= 1.2);
+    const ia = ang.filter((_, i) => inl[i]), iw = wt.filter((_, i) => inl[i]);
+    const angle = circMean90(ia, iw), total = wt.reduce((a, b) => a + b, 0), inW = iw.reduce((a, b) => a + b, 0);
+    const dis = ia.reduce((s, a, i) => s + iw[i] * dev90(a, angle), 0) / inW;
+    let conf = (inW / total) * Math.max(0, Math.min(1, 1 - dis / 3));
+    if (rects.length === 1) conf = Math.min(1, rects[0].rectangularity / 0.95) * 0.9;
+    return [angle, conf];
+  }
+  function angleFromEdges(work, mask) {
+    const { w, h } = work, k = Math.max(3, Math.round(Math.min(w, h) * 0.02) | 1), r = (k - 1) >> 1;
+    const dl = dilate(mask, w, h, r), er = erode(mask, w, h, r);
+    const g = blur(grayOf(work.rgba, w, h), w, h, gaussTaps(Math.max(1.2, Math.min(w, h) / 300)));
+    const sel = [], mags = [];
+    for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+      const i = y * w + x; if (!dl[i] || er[i]) continue;
+      const gx = 3 * (g[i - w + 1] - g[i - w - 1]) + 10 * (g[i + 1] - g[i - 1]) + 3 * (g[i + w + 1] - g[i + w - 1]);
+      const gy = 3 * (g[i + w - 1] - g[i - w - 1]) + 10 * (g[i + w] - g[i - w]) + 3 * (g[i + w + 1] - g[i - w + 1]);
+      sel.push([gx, gy]); mags.push(gx * gx + gy * gy);
+    }
+    if (!sel.length) return [0, 0];
+    const cut = Math.max(Float64Array.from(mags).sort()[Math.floor(mags.length * 0.9)], 1e-6);
+    let re = 0, im = 0, tot = 0, cnt = 0;
+    sel.forEach(([gx, gy], i) => { const m = mags[i]; if (m < cut) return; const phi = Math.atan2(gy, gx); re += m * Math.cos(4 * phi); im += m * Math.sin(4 * phi); tot += m; cnt++; });
+    if (cnt < 32 || tot <= 0) return [0, 0];
+    let a = (Math.atan2(im, re) * 180 / Math.PI / 4) % 90; if (a < 0) a += 90; if (a > 45) a -= 90;
+    return [a, Math.min(1, Math.hypot(re, im) / tot)];
+  }
+  function estimateAngle(work, seg) {
+    const [ac, cc] = angleFromComponents(seg.kept), [ae, ce] = angleFromEdges(work, seg.mask);
+    let a;
+    if (cc <= 0 && ce <= 0) return 0;
+    if (cc > 0 && ce > 0) a = dev90(ac, ae) <= 2.5 ? circMean90([ac, ae], [2 * cc * cc, ce * ce]) : (cc >= ce ? ac : ae);
+    else a = cc > 0 ? ac : ae;
+    if (Math.abs(a) > 25 || Math.abs(a) < 0.15) return 0;
+    return a;
+  }
+
+  // ---------- which way is up --------------------------------------------
+  function regionsWithHoles(m, w, h, minArea) {
+    // Closed areas inside the product, the way contour finding sees them:
+    // each region with its holes filled, and each hole on its own (a phone
+    // lying in a box tray is a hole in the tray).
+    const { lab, comps } = components(m, w, h), out = [];
+    for (const c of comps) {
+      const bw = c.x1 - c.x0 + 3, bh = c.y1 - c.y0 + 3;
+      if (bw * bh < minArea) continue;
+      const loc = (x, y) => (y - c.y0 + 1) * bw + (x - c.x0 + 1);
+      const isC = (x, y) => x >= 0 && y >= 0 && x < w && y < h && lab[y * w + x] === c.id;
+      const seen = new Uint8Array(bw * bh), st = [0]; seen[0] = 1;
+      while (st.length) { const i = st.pop(), lx = i % bw, ly = (i / bw) | 0;
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const nx = lx + dx, ny = ly + dy;
+          if (nx < 0 || ny < 0 || nx >= bw || ny >= bh) continue; const j = ny * bw + nx; if (seen[j]) continue;
+          if (isC(nx + c.x0 - 1, ny + c.y0 - 1)) continue; seen[j] = 1; st.push(j); } }
+      let holeArea = 0; const pocket = new Int32Array(bw * bh), pockets = [];
+      for (let ly = 1; ly < bh - 1; ly++) for (let lx = 1; lx < bw - 1; lx++) {
+        const j = ly * bw + lx; if (seen[j] || pocket[j] || isC(lx + c.x0 - 1, ly + c.y0 - 1)) continue;
+        const p = { area: 0, rows: new Map() }, s2 = [j]; pocket[j] = pockets.length + 1;
+        while (s2.length) { const i = s2.pop(), px = i % bw, py = (i / bw) | 0; p.area++;
+          const gy = py + c.y0 - 1, gx = px + c.x0 - 1, r = p.rows.get(gy); if (!r) p.rows.set(gy, [gx, gx]); else { if (gx < r[0]) r[0] = gx; if (gx > r[1]) r[1] = gx; }
+          for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const nx = px + dx, ny = py + dy, k = ny * bw + nx;
+            if (seen[k] || pocket[k] || isC(nx + c.x0 - 1, ny + c.y0 - 1)) continue; pocket[k] = pockets.length + 1; s2.push(k); } }
+        pockets.push(p); holeArea += p.area;
+      }
+      out.push({ area: c.area + holeArea, rows: c.rows });
+      for (const p of pockets) if (p.area >= minArea) out.push(p);
+    }
+    return out;
+  }
+  function canonical(g, w, h, rect, end) {
+    const pts = boxPoints(rect), edges = [0, 1, 2, 3].map(i => [pts[i], pts[(i + 1) % 4]]);
+    const lens = edges.map(([a, b]) => Math.hypot(a[0] - b[0], a[1] - b[1]));
+    const shorts = [0, 1, 2, 3].sort((a, b) => lens[a] - lens[b]).slice(0, 2).sort((a, b) => a - b);
+    let [p, q] = edges[shorts[end]];
+    const v1 = [q[0] - p[0], q[1] - p[1]], v2 = [rect.cx - p[0], rect.cy - p[1]];
+    if (v1[0] * v2[1] - v1[1] * v2[0] < 0) [p, q] = [q, p];
+    const rest = pts.filter(x => x !== p && x !== q);
+    const bl = rest.sort((a, b) => Math.hypot(a[0] - p[0], a[1] - p[1]) - Math.hypot(b[0] - p[0], b[1] - p[1]))[0];
+    const aspect = Math.max(rect.w, rect.h) / Math.max(Math.min(rect.w, rect.h), 1e-6);
+    const W = CANON_W, H = Math.round(W * aspect), out = new Uint8Array(W * H);
+    const ux = (q[0] - p[0]) / W, uy = (q[1] - p[1]) / W, vx = (bl[0] - p[0]) / H, vy = (bl[1] - p[1]) / H;
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      let sx = p[0] + (x + 0.5) * ux + (y + 0.5) * vx - 0.5, sy = p[1] + (x + 0.5) * uy + (y + 0.5) * vy - 0.5;
+      sx = Math.max(0, Math.min(w - 1, sx)); sy = Math.max(0, Math.min(h - 1, sy));
+      const x0 = Math.floor(sx), y0 = Math.floor(sy), x1 = Math.min(w - 1, x0 + 1), y1 = Math.min(h - 1, y0 + 1), fx = sx - x0, fy = sy - y0;
+      out[y * W + x] = Math.round(g[y0 * w + x0] * (1 - fx) * (1 - fy) + g[y0 * w + x1] * fx * (1 - fy) + g[y1 * w + x0] * (1 - fx) * fy + g[y1 * w + x1] * fx * fy);
+    }
+    return { patch: out, W, H, dir: [(p[0] + q[0]) / 2 - rect.cx, (p[1] + q[1]) / 2 - rect.cy] };
+  }
+  function cornerEdges(v) {
+    const { patch, W, H } = v, e = canny(blurU8(patch, W, H, K3), W, H, 30, 90);
+    const dens = (y0, y1, x0, x1) => { let s = 0, n = 0; for (let y = Math.floor(y0 * H); y < Math.floor(y1 * H); y++) for (let x = Math.floor(x0 * W); x < Math.floor(x1 * W); x++) { s += e[y * W + x]; n++; } return n ? s / n : 0; };
+    return [dens(0.03, 0.25, 0.05, 0.55), dens(0.35, 0.65, 0.10, 0.90)];
+  }
+  function hasIsland(v) {
+    const { patch, W, H } = v, y1 = Math.floor(0.14 * H), x0 = Math.floor(0.10 * W), x1 = Math.floor(0.90 * W), rw = x1 - x0, rh = y1;
+    if (rw <= 0 || rh <= 0) return false;
+    const reg = new Uint8Array(rw * rh); for (let y = 0; y < rh; y++) for (let x = 0; x < rw; x++) reg[y * rw + x] = patch[y * W + x + x0];
+    for (const t of [10, 16, 24, 34, 46, 60]) {
+      const dark = new Uint8Array(rw * rh); for (let i = 0; i < dark.length; i++) dark[i] = reg[i] < t ? 1 : 0;
+      const { lab, comps } = components(dark, rw, rh);
+      for (const c of comps) {
+        const bw = c.x1 - c.x0 + 1, bh = c.y1 - c.y0 + 1;
+        if (c.x0 <= 1 || c.y0 <= 1 || c.x0 + bw >= rw - 1) continue;
+        const cx = (c.x0 + x0 + bw / 2) / W;
+        if (cx < 0.30 || cx > 0.70) continue;
+        if (bw / W < 0.16 || bw / W > 0.50 || bh / bw < 0.15 || bh / bw > 0.55) continue;
+        if (c.area / (bw * bh) < 0.65) continue;
+        const blob = new Uint8Array(rw * rh); for (let i = 0; i < blob.length; i++) blob[i] = lab[i] === c.id ? 1 : 0;
+        const ring = dilate(blob, rw, rh, 4);
+        let rs = 0, rn = 0, bs = 0, bn = 0;
+        for (let i = 0; i < blob.length; i++) { if (blob[i]) { bs += reg[i]; bn++; } else if (ring[i]) { rs += reg[i]; rn++; } }
+        if (!rn) continue;
+        if (rs / rn - bs / bn < 15) continue;
+        return true;
+      }
+    }
+    return false;
+  }
+  function turnsFor(d) {
+    let best = 0, bestUp = -Infinity, x = d[0], y = d[1];
+    for (let k = 0; k < 4; k++) { if (-y > bestUp) { bestUp = -y; best = k; } [x, y] = [y, -x]; }
+    return best;
+  }
+  // Quarter turns anticlockwise that bring the phone's top up, or null.
+  function detectTurn(img, iw, ih, seg) {
+    const o = drawScaled(img, iw, ih, ORIENT), w = o.w, h = o.h, g = grayOf(o.rgba, w, h);
+    const m = new Uint8Array(w * h);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) m[y * w + x] = seg.mask[Math.min(seg.h - 1, Math.floor(y * seg.h / h)) * seg.w + Math.min(seg.w - 1, Math.floor(x * seg.w / w))];
+    const { comps } = components(m, w, h); if (!comps.length) return { turns: 0, why: "sin producto" };
+    const mainC = comps.sort((a, b) => b.area - a.area)[0];
+    const mainRect = minAreaRect(rowPoints(mainC.rows)); if (!mainRect) return { turns: 0, why: "sin contorno" };
+    const mainArea = mainC.area, mainFill = mainArea / Math.max(mainRect.w * mainRect.h, 1);
+
+    const edges = dilate(canny(blurU8(g, w, h, K5), w, h, 40, 120), w, h, 1);
+    const regions = new Uint8Array(w * h); for (let i = 0; i < regions.length; i++) regions[i] = m[i] && !edges[i] ? 1 : 0;
+    const cands = [{ area: mainArea, rows: mainC.rows }, ...regionsWithHoles(regions, w, h, 0.08 * mainArea)]
+      .filter(c => c.area >= 0.08 * mainArea)
+      .map(c => { const r = minAreaRect(rowPoints(c.rows)); if (!r || Math.min(r.w, r.h) < 12) return null;
+        return { area: c.area, aspect: Math.max(r.w, r.h) / Math.min(r.w, r.h), fill: c.area / (r.w * r.h), rect: r }; })
+      .filter(Boolean);
+    const phones = cands.filter(c => c.aspect >= PHONE_ASPECT[0] && c.aspect <= PHONE_ASPECT[1] && c.fill >= 0.85);
+    let rect, whole;
+    if (phones.length) { rect = phones.sort((a, b) => b.area - a.area)[0].rect; whole = true; }
+    else {
+      rect = mainRect; whole = false;
+      const asp = Math.max(rect.w, rect.h) / Math.max(Math.min(rect.w, rect.h), 1e-6);
+      if (mainFill < 0.8 || Math.min(rect.w, rect.h) < 12 || asp > 3) return { turns: 0, why: "no se ve el contorno del móvil" };
+    }
+    const views = [0, 1].map(e => canonical(g, w, h, rect, e));
+    if (whole) {
+      const isl = views.map(hasIsland);
+      if (isl[0] !== isl[1]) return { turns: turnsFor(views[isl[0] ? 0 : 1].dir), why: "island" };
+    }
+    const st = views.map(cornerEdges), tls = st.map(s => s[0]), mids = st.map(s => s[1]);
+    const hi = tls[0] >= tls[1] ? 0 : 1, lo = 1 - hi;
+    const back = whole ? Math.max(...mids) < BACK_MAX_MID && tls[hi] >= 2 * Math.max(tls[lo], 0.01) : tls[hi] >= 2.5 * Math.max(tls[lo], 0.01);
+    if (back && tls[hi] >= 2.5 * Math.max(...mids)) return { turns: turnsFor(views[hi].dir), why: "camera" };
+    return { turns: 0, why: "no se ve con claridad la cámara ni la Dynamic Island" };
+  }
+
+  // ---------- framing and rendering ---------------------------------------
+  function planCrop(sub, W, H, A, fill, ratioPref) {
+    // Rotated space: the original turned anticlockwise by A around its centre.
+    const c = Math.cos(A), s = Math.sin(A), cx = W / 2, cy = H / 2;
+    const inside = (x, y) => { const ox = c * x - s * y + cx, oy = s * x + c * y + cy, tol = 0.012 * Math.max(W, H);
+      return ox >= -tol && oy >= -tol && ox <= W + tol && oy <= H + tol; };
+    const fits = (x0, y0, cw, ch) => inside(x0, y0) && inside(x0 + cw, y0) && inside(x0, y0 + ch) && inside(x0 + cw, y0 + ch);
+    const sw = sub.x1 - sub.x0, sh = sub.y1 - sub.y0, scx = (sub.x0 + sub.x1) / 2, scy = (sub.y0 + sub.y1) / 2;
+    const ratios = ratioPref ? [ratioPref] : RATIOS;
+    const opts = ratios.map(r => { const cw = Math.max(sw / fill, r * sh / fill); return { r, cw, ch: cw / r, waste: cw * (cw / r) - sw * sh }; }).sort((a, b) => a.waste - b.waste);
+    let best = null;
+    for (const o of opts) {
+      let found = null;
+      for (let f = 1; f >= 0 && !found; f -= 0.04) {
+        const cw = Math.max(sw, sw + (o.cw - sw) * f), ch = Math.max(sh, cw / o.r);
+        const cw2 = ch * o.r; if (cw2 < sw - 0.5) continue;
+        const xs = [], ys = [];
+        for (let t = 0; t <= 8; t++) { const k = t % 2 ? (t + 1) / 2 : -t / 2; xs.push(scx - cw2 / 2 + k * (cw2 - sw) / 8); ys.push(scy - ch / 2 + k * (ch - sh) / 8); }
+        for (const y0 of ys) { if (found) break; for (const x0 of xs) {
+          if (x0 > sub.x0 + 0.5 || y0 > sub.y0 + 0.5 || x0 + cw2 < sub.x1 - 0.5 || y0 + ch < sub.y1 - 0.5) continue;
+          if (fits(x0, y0, cw2, ch)) { found = { x0, y0, cw: cw2, ch, f }; break; } } }
+      }
+      if (found && found.f >= 0.6) { best = found; break; }
+      if (found && (!best || found.f > best.f)) best = found;
+    }
+    if (!best) {
+      // The product runs off the photo (an arm reaching in from the edge).
+      // Cutting a little of it beats painting the missing corners flat:
+      // take the largest frame of the right shape that stays inside the
+      // photo, as close to the product's centre as it can sit.
+      const o = opts[0];
+      for (let f = 1; f >= 0.25 && !best; f -= 0.03) {
+        const cw = o.cw * f, ch = o.ch * f;
+        for (let t = 0; t <= 24 && !best; t++) {
+          const k = t % 2 ? (t + 1) / 2 : -t / 2;
+          for (const [dx, dy] of [[k, 0], [0, k], [k, k], [k, -k]]) {
+            const x0 = scx - cw / 2 + dx * cw / 24, y0 = scy - ch / 2 + dy * ch / 24;
+            if (fits(x0, y0, cw, ch)) { best = { x0, y0, cw, ch, f: 0, trimmed: true }; break; }
+          }
+        }
+      }
+      if (!best) best = { x0: scx - o.cw / 2, y0: scy - o.ch / 2, cw: o.cw, ch: o.ch, f: 1, overflow: true };
+    }
+    return best;
+  }
+  function levels(ctx, w, h, strength) {
+    const id = ctx.getImageData(0, 0, w, h), d = id.data, hist = new Uint32Array(256);
+    for (let i = 0; i < d.length; i += 4) hist[Math.round(0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2])]++;
+    const n = w * h; let acc = 0, lo = 0, hi = 255;
+    for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc >= n * 0.004) { lo = v; break; } }
+    acc = 0; for (let v = 255; v >= 0; v--) { acc += hist[v]; if (acc >= n * 0.004) { hi = v; break; } }
+    if (hi - lo < 8) return;
+    const lut = new Uint8ClampedArray(256);
+    for (let v = 0; v < 256; v++) lut[v] = Math.round(v * (1 - strength) + Math.max(0, Math.min(255, (v - lo) * 255 / (hi - lo))) * strength);
+    for (let i = 0; i < d.length; i += 4) { d[i] = lut[d[i]]; d[i + 1] = lut[d[i + 1]]; d[i + 2] = lut[d[i + 2]]; }
+    ctx.putImageData(id, 0, 0);
+  }
+
+  async function loadImage(blobOrUrl) {
+    const img = new Image(); img.decoding = "async";
+    img.src = typeof blobOrUrl === "string" ? blobOrUrl : URL.createObjectURL(blobOrUrl);
+    try { await img.decode(); } catch (e) { throw new Error("este archivo no se puede abrir como imagen en este navegador"); }
+    return img;
+  }
+
+  // opts: { fill, ratio (number|null), upright, levels, turnCw (null = auto) }
+  async function process(img, opts) {
+    const W = img.naturalWidth, H = img.naturalHeight, report = { notes: [], turnCw: 0, turnWhy: "", angle: 0 };
+    const work = drawScaled(img, W, H, WORK), seg = segment(work);
+    let A = 0, crop;
+    if (!seg.ok) {
+      report.notes.push("No se ha localizado el producto (" + seg.why + "), así que la foto se ha dejado como estaba.");
+      if (opts.turnCw) { report.turnCw = opts.turnCw; report.turnWhy = "manual"; A = -opts.turnCw * Math.PI / 180; }
+      const c = Math.abs(Math.cos(A)), s = Math.abs(Math.sin(A)), rw = W * c + H * s, rh = W * s + H * c;
+      crop = { x0: -rw / 2, y0: -rh / 2, cw: rw, ch: rh };
+    } else {
+      if (opts.turnCw != null) { report.turnCw = opts.turnCw; report.turnWhy = "manual"; }
+      else if (opts.upright) {
+        const t = detectTurn(img, W, H, seg), sure = t.why === "island" || t.why === "camera";
+        report.turnCw = ((4 - t.turns) % 4) * 90; report.turnWhy = sure ? t.why : "";
+        if (!sure) report.turnUnsure = t.why;
+      }
+      report.angle = estimateAngle(work, seg);
+      A = (-report.turnCw + report.angle) * Math.PI / 180;
+      // Subject bounds in rotated, full-resolution space.
+      const c = Math.cos(A), s = Math.sin(A), k = work.k, cx = W / 2, cy = H / 2;
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (const comp of seg.kept) comp.rows.forEach((r, y) => { for (const x of [r[0], r[1] + 1]) for (const yy of [y, y + 1]) {
+        const px = x / k - cx, py = yy / k - cy, rx = c * px + s * py, ry = -s * px + c * py;
+        if (rx < x0) x0 = rx; if (rx > x1) x1 = rx; if (ry < y0) y0 = ry; if (ry > y1) y1 = ry; } });
+      crop = planCrop({ x0, y0, x1, y1 }, W, H, A, opts.fill, opts.ratio);
+      if (crop.trimmed) report.notes.push("El producto se sale de la foto, así que el encuadre corta un poco por ese lado.");
+      else if (crop.f < 0.6 && !crop.overflow) report.notes.push("El producto está muy cerca del borde de la foto: se ha dejado menos margen del pedido.");
+      if (crop.overflow) report.notes.push("El producto toca el borde de la foto: las esquinas se han rellenado con el color del fondo.");
+      report.dropped = seg.dropped;
+    }
+    const scale = Math.min(1, MAX_OUT / Math.max(crop.cw, crop.ch));
+    const ow = Math.max(1, Math.round(crop.cw * scale)), oh = Math.max(1, Math.round(crop.ch * scale));
+    const cv = document.createElement("canvas"); cv.width = ow; cv.height = oh;
+    const ctx = cv.getContext("2d", { willReadFrequently: true });
+    ctx.fillStyle = "rgb(" + seg.bg.map(Math.round).join(",") + ")"; ctx.fillRect(0, 0, ow, oh);
+    ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = "high";
+    const c = Math.cos(A), s = Math.sin(A);
+    ctx.setTransform(scale, 0, 0, scale, -crop.x0 * scale, -crop.y0 * scale);
+    ctx.transform(c, -s, s, c, 0, 0);
+    ctx.translate(-W / 2, -H / 2);
+    ctx.drawImage(img, 0, 0);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    if (opts.levels) levels(ctx, ow, oh, 0.5);
+    report.size = [ow, oh];
+    if (Math.max(ow, oh) < 1000) report.notes.push("Ha salido pequeña (" + ow + "×" + oh + " px) porque la foto de partida lo es. Usa el original del carrete, no una copia de WhatsApp ni una captura.");
+    const blob = await new Promise(r => cv.toBlob(r, "image/jpeg", 0.92));
+    cv.width = cv.height = 0;
+    return { blob, report };
+  }
+  return { process, loadImage, turnsFor, foldDeg, _segment: segment };
+})();
+
+/* ======================================================================
+   Interface
+   ====================================================================== */
+const $ = id => document.getElementById(id);
+const cards = $("cards"), statusEl = $("status"), saveAllBtn = $("saveAll"), hint = $("hint");
+let items = [], busy = false, downloads = null, nextId = 1;
+
+function opts() {
+  const r = $("ratio").value;
+  return { fill: parseInt($("fill").value, 10) / 100, ratio: r === "auto" ? null : parseFloat(r), upright: $("upright").checked, levels: $("levels").checked };
+}
+function setStatus(t) { statusEl.textContent = t; }
+function setBusy(on, t) { busy = on; if (t != null) setStatus(t); $("apply").disabled = on; saveAllBtn.disabled = on || !items.some(i => i.result && !i.sample); document.querySelectorAll(".card button").forEach(b => b.disabled = on); }
+const stem = n => n.replace(/\.[^.]+$/, "");
+const fmtDeg = a => (a > 0 ? "+" : "") + a.toFixed(1).replace(".", ",") + "°";
+
+function chipsFor(rep) {
+  const out = [];
+  if (rep.turnCw) out.push(["girada " + rep.turnCw + "°" + (rep.turnWhy === "manual" ? " a mano" : rep.turnWhy === "camera" ? " · cámara" : rep.turnWhy === "island" ? " · Dynamic Island" : ""), true]);
+  out.push([Math.abs(rep.angle) >= 0.05 ? "enderezada " + fmtDeg(rep.angle) : "ya estaba recta", Math.abs(rep.angle) >= 0.05]);
+  if (rep.dropped) out.push(["fuera " + rep.dropped + (rep.dropped === 1 ? " objeto" : " objetos"), true]);
+  out.push([rep.size[0] + "×" + rep.size[1] + " px", false]);
+  return out;
+}
+
+function render(item) {
+  const card = item.el || document.createElement("div");
+  card.className = "card"; item.el = card; card.textContent = "";
+  if (item.error) {
+    const b = document.createElement("div"); b.className = "body";
+    const n = document.createElement("div"); n.className = "name"; n.textContent = item.name;
+    const e = document.createElement("div"); e.className = "err"; e.textContent = "No se ha podido procesar: " + item.error;
+    b.append(n, e); card.append(b); return card;
+  }
+  const stage = document.createElement("div"); stage.className = "stage";
+  if (item.result) {
+    // The original and the result rarely share a shape (a phone lying across
+    // the frame comes out portrait), so a wipe between them says nothing.
+    // A tap shows one or the other, each at its own shape.
+    const after = document.createElement("img"); after.className = "after"; after.alt = "Foto corregida de " + item.name; after.src = item.result.url;
+    const before = document.createElement("img"); before.className = "before"; before.alt = "Original de " + item.name; before.src = item.srcUrl; before.hidden = true;
+    const tag = document.createElement("span"); tag.className = "tag r"; tag.textContent = "DESPUÉS";
+    const flip = document.createElement("button"); flip.type = "button"; flip.className = "flip"; flip.textContent = "Ver original";
+    stage.append(after, before, tag, flip);
+    if (item.sample) { const t = document.createElement("span"); t.className = "tag l sample"; t.textContent = "EJEMPLO"; stage.append(t); }
+    const show = orig => { before.hidden = !orig; after.hidden = orig; tag.textContent = orig ? "ANTES" : "DESPUÉS"; flip.textContent = orig ? "Ver corregida" : "Ver original"; };
+    flip.addEventListener("click", () => show(after.hidden === false));
+  }
+  if (item.working) { const v = document.createElement("div"); v.className = "busy-veil"; v.textContent = "Procesando…"; stage.append(v); }
+  card.append(stage);
+
+  const body = document.createElement("div"); body.className = "body";
+  const n = document.createElement("div"); n.className = "name"; n.textContent = item.sample ? "Ejemplo: brillo de un iPhone tumbado" : item.name; body.append(n);
+  if (item.result) {
+    const rep = item.result.report, facts = document.createElement("div"); facts.className = "facts";
+    for (const [t, on] of chipsFor(rep)) { const c = document.createElement("span"); c.className = "chip" + (on ? " on" : ""); c.textContent = t; facts.append(c); }
+    body.append(facts);
+    for (const t of rep.notes) { const d = document.createElement("div"); d.className = "note"; d.textContent = t; body.append(d); }
+    if (!rep.turnCw && rep.turnUnsure && !item.sample) { const d = document.createElement("div"); d.className = "note"; d.textContent = "No se ha girado: " + rep.turnUnsure + ". Si no está de pie, usa Girar."; body.append(d); }
+    const row = document.createElement("div"); row.className = "row";
+    const turn = document.createElement("button"); turn.type = "button"; turn.className = "ghost"; turn.textContent = "Girar ↻"; turn.setAttribute("aria-label", "Girar 90 grados a la derecha");
+    turn.addEventListener("click", () => turnOne(item));
+    row.append(turn);
+    if (!item.sample) { const save = document.createElement("button"); save.type = "button"; save.textContent = "Guardar"; save.addEventListener("click", () => saveOne(item)); row.append(save); }
+    body.append(row);
+  }
+  card.append(body);
+  return card;
+}
+
+async function run(item) {
+  item.working = true; render(item);
+  try {
+    const img = await PF.loadImage(item.srcUrl);
+    const o = opts(); o.turnCw = item.manualTurn;
+    const res = await PF.process(img, o);
+    if (item.result) URL.revokeObjectURL(item.result.url);
+    item.result = { blob: res.blob, url: URL.createObjectURL(res.blob), report: res.report };
+    item.error = null;
+  } catch (e) { item.error = e && e.message ? e.message : String(e); }
+  item.working = false; render(item);
+  await new Promise(r => setTimeout(r, 0));
+}
+
+async function addFiles(fileList) {
+  const files = [...fileList].filter(f => f.type.startsWith("image/") || /\.(heic|heif|jpe?g|png|webp)$/i.test(f.name));
+  if (!files.length || busy) return;
+  // The example makes way for the seller's own photos.
+  for (const it of items.filter(i => i.sample)) { it.el.remove(); }
+  items = items.filter(i => !i.sample);
+  const fresh = files.map(f => ({ id: nextId++, name: f.name, srcUrl: URL.createObjectURL(f), manualTurn: null }));
+  items.push(...fresh);
+  for (const it of fresh) cards.append(render(it));
+  setBusy(true);
+  for (let i = 0; i < fresh.length; i++) { setStatus("Procesando " + (i + 1) + " de " + fresh.length + "…"); await run(fresh[i]); }
+  setBusy(false, items.length + (items.length === 1 ? " foto lista" : " fotos listas"));
+  updateHint();
+}
+
+async function turnOne(item) {
+  if (busy) return;
+  item.manualTurn = ((item.result ? item.result.report.turnCw : 0) + 90) % 360;
+  setBusy(true, "Girando…"); await run(item); setBusy(false, "Girada " + item.manualTurn + "°");
+}
+
+async function applyAll() {
+  if (busy || !items.length) return;
+  setBusy(true);
+  for (let i = 0; i < items.length; i++) { setStatus("Aplicando " + (i + 1) + " de " + items.length + "…"); await run(items[i]); }
+  setBusy(false, "Ajustes aplicados");
+}
+
+function outName(item) { return stem(item.name) + "-lista.jpg"; }
+async function saveOne(item) {
+  if (!item.result) return;
+  if (!downloads) { setStatus("Mantén pulsada la foto y elige «Guardar en Fotos»."); return; }
+  try { await downloads.save({ filename: outName(item), data: item.result.blob }); setStatus("Guardada: " + outName(item)); }
+  catch (e) { const c = e && e.code; setStatus(c === "declined" ? "No se ha guardado." : c === "rate_limited" ? "Espera un momento y vuelve a pulsar Guardar." : c === "host_unavailable" ? "Esta app no puede guardar archivos: ábrela en el navegador." : "No se ha podido guardar. Mantén pulsada la foto para guardarla."); }
+}
+
+// A plain stored zip: one confirmation for the whole batch.
+const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+function crc32(u8) { let c = 0xffffffff; for (let i = 0; i < u8.length; i++) c = CRC[(c ^ u8[i]) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; }
+async function zip(entries) {
+  const enc = new TextEncoder(), parts = [], central = []; let offset = 0;
+  for (const { name, blob } of entries) {
+    const data = new Uint8Array(await blob.arrayBuffer()), nm = enc.encode(name), crc = crc32(data);
+    const lh = new DataView(new ArrayBuffer(30));
+    lh.setUint32(0, 0x04034b50, true); lh.setUint16(4, 20, true); lh.setUint16(6, 0x0800, true); lh.setUint16(8, 0, true);
+    lh.setUint32(14, crc, true); lh.setUint32(18, data.length, true); lh.setUint32(22, data.length, true); lh.setUint16(26, nm.length, true);
+    parts.push(lh.buffer, nm, data);
+    const ch = new DataView(new ArrayBuffer(46));
+    ch.setUint32(0, 0x02014b50, true); ch.setUint16(4, 20, true); ch.setUint16(6, 20, true); ch.setUint16(8, 0x0800, true);
+    ch.setUint32(16, crc, true); ch.setUint32(20, data.length, true); ch.setUint32(24, data.length, true); ch.setUint16(28, nm.length, true); ch.setUint32(42, offset, true);
+    central.push(ch.buffer, nm);
+    offset += 30 + nm.length + data.length;
+  }
+  const csize = central.reduce((s, p) => s + (p.byteLength || p.length), 0), end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0, 0x06054b50, true); end.setUint16(8, entries.length, true); end.setUint16(10, entries.length, true); end.setUint32(12, csize, true); end.setUint32(16, offset, true);
+  return new Blob([...parts, ...central, end.buffer], { type: "application/zip" });
+}
+async function saveAll() {
+  const ready = items.filter(i => i.result && !i.sample);
+  if (!ready.length || busy) return;
+  if (ready.length === 1) return saveOne(ready[0]);
+  if (!downloads) { setStatus("Mantén pulsada cada foto para guardarla."); return; }
+  setBusy(true, "Preparando " + ready.length + " fotos…");
+  try {
+    const used = new Set(), entries = ready.map(i => { let n = outName(i), k = 2; while (used.has(n)) n = stem(i.name) + "-lista-" + k++ + ".jpg"; used.add(n); return { name: n, blob: i.result.blob }; });
+    const z = await zip(entries); setBusy(false);
+    await downloads.save({ filename: "fotos-listas.zip", data: z }); setStatus("Guardado fotos-listas.zip");
+  } catch (e) { setBusy(false); setStatus(e && e.code === "declined" ? "No se ha guardado." : "No se ha podido guardar el zip."); }
+}
+
+function updateHint() {
+  hint.textContent = downloads
+    ? "Guardar abre la hoja de compartir: elige «Guardar imagen» para que vaya al carrete."
+    : "Para guardar, mantén pulsada la foto corregida y elige «Guardar en Fotos».";
+}
+
+// Read-only view of the results, for checking the page from a test runner.
+window.__photofixResults = () => items.map(i => ({ name: i.name, error: i.error || null, report: i.result ? i.result.report : null }));
+
+// ---------- wiring ----------
+$("files").addEventListener("change", e => { addFiles(e.target.files); e.target.value = ""; });
+const pick = $("pick");
+pick.addEventListener("dragover", e => { e.preventDefault(); pick.classList.add("over"); });
+pick.addEventListener("dragleave", () => pick.classList.remove("over"));
+pick.addEventListener("drop", e => { e.preventDefault(); pick.classList.remove("over"); addFiles(e.dataTransfer.files); });
+$("fill").addEventListener("input", () => { $("fillv").textContent = $("fill").value; });
+$("apply").addEventListener("click", applyAll);
+saveAllBtn.addEventListener("click", saveAll);
+try { const s = JSON.parse(localStorage.getItem("photofix-settings") || "null"); if (s) { $("fill").value = s.fill; $("fillv").textContent = s.fill; $("ratio").value = s.ratio; $("upright").checked = s.upright; $("levels").checked = s.levels; } } catch (e) {}
+for (const id of ["fill", "ratio", "upright", "levels"]) $(id).addEventListener("change", () => {
+  try { localStorage.setItem("photofix-settings", JSON.stringify({ fill: $("fill").value, ratio: $("ratio").value, upright: $("upright").checked, levels: $("levels").checked })); } catch (e) {}
+});
+
+(async () => {
+  updateHint();
+  const sample = { id: nextId++, name: "ejemplo.jpg", srcUrl: "ejemplo.jpg", manualTurn: null, sample: true };
+  items.push(sample); cards.append(render(sample));
+  setBusy(true);
+  await run(sample);
+  setBusy(false, sample.error ? "Elige tus fotos para empezar." : "Así queda una foto. Elige las tuyas.");
+  if (window.claude && window.claude.use) {
+    try { downloads = await window.claude.use("downloads"); } catch (e) { downloads = null; }
+    updateHint(); setBusy(busy);
+  }
+})();
+</script>
