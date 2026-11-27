@@ -11,6 +11,7 @@ the margin, look, adjust.
 from __future__ import annotations
 
 import io
+import json
 import os
 import re
 import shutil
@@ -92,6 +93,24 @@ class Job:
     def touch(self) -> None:
         self.dir.touch(exist_ok=True)
 
+    # A turn chosen by hand for one photo outlives "Aplicar cambios": having
+    # to turn the same photo again after changing the margin would be absurd.
+    @property
+    def turns(self) -> dict[str, str]:
+        try:
+            data = json.loads((self.dir / "turns.json").read_text())
+        except (OSError, ValueError):
+            return {}
+        return {k: str(v) for k, v in data.items() if isinstance(k, str)}
+
+    def set_turn(self, name: str, deg: str) -> None:
+        turns = self.turns
+        if deg == "auto":
+            turns.pop(name, None)
+        else:
+            turns[name] = deg
+        (self.dir / "turns.json").write_text(json.dumps(turns))
+
 
 def find_job(job_id: str) -> Job | None:
     """Look a batch up by id, rejecting anything that is not one of ours."""
@@ -142,9 +161,9 @@ def _config_from_form(form) -> Config:
     if enhance not in PRESETS:
         enhance = "light"
 
-    bg = form.get("background", "auto")
+    bg = form.get("background", "")
     if bg not in ("", "auto", "wood"):
-        bg = "auto"
+        bg = ""
 
     fmt = form.get("format", "jpg")
     if fmt not in ("jpg", "png", "webp"):
@@ -155,7 +174,7 @@ def _config_from_form(form) -> Config:
         crop=flag("crop", True),
         ratio=ratio,
         pad_to_ratio=flag("pad_to_ratio", False),
-        fill=min(max(num("fill", 0.86), 0.3), 1.0),
+        fill=min(max(num("fill", 0.78), 0.3), 1.0),
         center_bias_y=min(max(num("bias_y", 0.0), -0.3), 0.3),
         drop_distractors=flag("drop_distractors", True),
         background=bg,
@@ -173,41 +192,46 @@ def _render(job: Job, cfg: Config) -> list[dict]:
     shutil.rmtree(job.out_dir, ignore_errors=True)
     job.out_dir.mkdir(parents=True, exist_ok=True)
 
-    items = []
-    for name in job.originals:
-        src = job.in_dir / name
-        entry: dict = {"name": name, "original": f"/file/{job.id}/in/{name}"}
-        try:
-            with CPU_SLOTS:
-                result = process(io_utils.load_bgr(src, MAX_INPUT), cfg)
-        except Exception as exc:
-            entry.update(ok=False, error=str(exc))
-            items.append(entry)
-            continue
+    turns = job.turns
+    return [_render_one(job, name, cfg, turns.get(name, "auto"))
+            for name in job.originals]
 
-        out_name = f"{Path(name).stem}.{cfg.fmt}"
-        io_utils.save(result.image, job.out_dir / out_name,
-                      fmt=cfg.fmt, quality=cfg.quality)
 
-        rep = result.report
-        entry.update(
-            ok=True,
-            output=f"/file/{job.id}/out/{out_name}?v={int(time.time() * 1000)}",
-            out_name=out_name,
-            rotated=round(rep.rotated_deg, 2),
-            summary=summarise(rep),
-            warnings=[note_to_spanish(n) for n in rep.warnings],
-            size=f"{rep.output_size[0]} x {rep.output_size[1]}",
-            removed=max(0, rep.objects_found - rep.objects_kept),
-            detected=rep.confident,
-            ms=round(rep.elapsed_ms),
-            # The before/after slider sizes its frame from these, so neither
-            # picture ends up letterboxed inside the other's shape.
-            ratio_before=round(rep.input_size[0] / max(rep.input_size[1], 1), 4),
-            ratio_after=round(rep.output_size[0] / max(rep.output_size[1], 1), 4),
-        )
-        items.append(entry)
-    return items
+def _render_one(job: Job, name: str, cfg: Config, turn: str = "auto") -> dict:
+    """Run one original through the pipeline and describe the result."""
+    src = job.in_dir / name
+    entry: dict = {"name": name, "original": f"/file/{job.id}/in/{name}"}
+    try:
+        with CPU_SLOTS:
+            result = process(io_utils.load_bgr(src, MAX_INPUT), cfg.with_(turn=turn))
+    except Exception as exc:
+        entry.update(ok=False, error=str(exc))
+        return entry
+
+    out_name = f"{Path(name).stem}.{cfg.fmt}"
+    io_utils.save(result.image, job.out_dir / out_name,
+                  fmt=cfg.fmt, quality=cfg.quality)
+
+    rep = result.report
+    entry.update(
+        ok=True,
+        output=f"/file/{job.id}/out/{out_name}?v={int(time.time() * 1000)}",
+        out_name=out_name,
+        rotated=round(rep.rotated_deg, 2),
+        turned=rep.turned_deg,
+        turn_manual=rep.turn_source == "manual",
+        summary=summarise(rep),
+        warnings=[note_to_spanish(n) for n in rep.warnings],
+        size=f"{rep.output_size[0]} x {rep.output_size[1]}",
+        removed=max(0, rep.objects_found - rep.objects_kept),
+        detected=rep.confident,
+        ms=round(rep.elapsed_ms),
+        # The before/after slider sizes its frame from these, so neither
+        # picture ends up letterboxed inside the other's shape.
+        ratio_before=round(rep.input_size[0] / max(rep.input_size[1], 1), 4),
+        ratio_after=round(rep.output_size[0] / max(rep.output_size[1], 1), 4),
+    )
+    return entry
 
 
 @app.get("/")
@@ -308,6 +332,32 @@ def rerender(job_id: str):
         ), 404
     job.touch()
     return jsonify(job=job.id, items=_render(job, _config_from_form(request.form)))
+
+
+@app.post("/api/turn/<job_id>")
+def turn(job_id: str):
+    """Fix the turn of one photo by hand and process just that one again."""
+    job = find_job(job_id)
+    if job is None:
+        return jsonify(
+            error="Ese lote ha caducado. Vuelve a subir las fotos."
+        ), 404
+    name = request.form.get("name", "")
+    if name not in job.originals:
+        return jsonify(error="Esa foto no está en el lote."), 404
+    deg = request.form.get("turn", "auto")
+    if deg != "auto":
+        try:
+            deg = int(deg) % 360
+        except ValueError:
+            return jsonify(error="Giro no válido."), 400
+        if deg % 90:
+            return jsonify(error="Giro no válido."), 400
+        deg = str(deg)
+    job.touch()
+    job.set_turn(name, deg)
+    job.out_dir.mkdir(parents=True, exist_ok=True)
+    return jsonify(job=job.id, item=_render_one(job, name, _config_from_form(request.form), deg))
 
 
 @app.get("/file/<job_id>/<kind>/<path:name>")

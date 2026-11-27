@@ -40,6 +40,15 @@ RATIO_ALIASES: dict[str, float] = {
 @dataclass
 class Config:
     # ---- geometry -------------------------------------------------------
+    upright: bool = True
+    """Turn a phone lying across the frame or upside down so that its top --
+    the camera from the back, the Dynamic Island from the front -- is up.
+    Only turns when one of those is clearly seen."""
+
+    turn: str = "auto"
+    """"auto" to decide per photo, or a fixed turn in degrees clockwise
+    ("0", "90", "180", "270") applied instead, for when the guess is wrong."""
+
     straighten: bool = True
     """Rotate the picture so the product's edges are perfectly vertical."""
 
@@ -63,9 +72,10 @@ class Config:
     surface mirrored outwards instead of settling for a different shape. Useful
     when a marketplace needs every image the same shape."""
 
-    fill: float = 0.86
-    """Fraction of the tight dimension the product should occupy. 0.86 leaves
-    a ~7% breathing margin on each side, like the reference shots."""
+    fill: float = 0.78
+    """Fraction of the tight dimension the product should occupy. 0.78 leaves
+    about 11% of margin on each side, which is what the seller's own edited
+    listing photos use."""
 
     center_bias_y: float = 0.0
     """Positive pushes the product above centre (0.05 = 5% of crop height)."""

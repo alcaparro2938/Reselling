@@ -68,6 +68,11 @@ def note_to_spanish(note) -> str:
 def summarise(report: Report) -> str:
     """One line describing the result, in the same order the eye checks it."""
     bits = []
+    if report.turned_deg:
+        how = "a mano" if report.turn_source == "manual" else {
+            "camera": "por la cámara", "island": "por la Dynamic Island",
+        }.get(report.turn_source, "")
+        bits.append(f"girada {report.turned_deg}° {how}".strip())
     if abs(report.rotated_deg) >= 0.01:
         bits.append(f"enderezada {report.rotated_deg:+.2f}°".replace(".", ","))
     else:

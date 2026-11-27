@@ -12,6 +12,36 @@ sobre una.
 Pensado para vender móviles, sobre todo iPhone, pero funciona con cualquier
 producto fotografiado desde arriba.
 
+## La web app (sin servidor)
+
+`web/photofix.html` es la misma idea portada a JavaScript: corre entera en el
+navegador del móvil, así que no hace falta tener nada encendido y las fotos no
+salen del dispositivo. Decide igual que la versión en Python con las fotos de
+referencia (los mismos giros en las siete). No recorta con GrabCut ni cambia el
+fondo: solo pone de pie, endereza, recorta y da un retoque suave de luz.
+
+Está publicada como artifact en claude.ai. Para servirla en otro sitio, basta
+con subir `photofix.html` y `ejemplo.jpg` juntos a cualquier hosting estático.
+
+## Ponerlo de pie
+
+Si el móvil está tumbado en la foto o boca abajo, se gira para que quede
+vertical con la parte de arriba arriba. Para saber cuál es la parte de arriba
+busca dos cosas:
+
+- **por detrás, el módulo de cámaras**, que va en la esquina superior
+  izquierda. Es lo único con detalle en una trasera lisa;
+- **por delante, la Dynamic Island**, la píldora negra centrada junto al borde
+  de arriba.
+
+Encuentra el móvil aunque esté dentro de la bandeja de la caja. Si no ve con
+claridad ninguna de las dos cosas (el móvil de canto en la mano, una funda que
+tapa las cámaras, un modelo con notch), **no gira nada**: girar mal es peor que
+no girar. Para esos casos cada foto tiene un botón **Girar ↻** que da un cuarto
+de vuelta a la derecha y recuerda tu elección aunque luego cambies los ajustes.
+Desde la terminal: `--turn 90` (o `180`, `270`), o `--no-upright` para
+desactivarlo.
+
 ## Cambiar el fondo y quitar la mano
 
 Por defecto se conserva la superficie de la foto. Con `--background auto` (o
@@ -24,8 +54,10 @@ Por defecto se conserva la superficie de la foto. Con `--background auto` (o
   con su sombra.
 
 La decisión no es un capricho: mide la dispersión de color del borde del
-encuadre. En las fotos cenitales sale alrededor de 0,6; en una foto con el móvil
-en alto, 2,4. El corte está en 1,0.
+encuadre. En una foto cenital sobre una mesa de madera real sale entre 1,2 y 1,8
+(la junta entre tablas o la esquina de la caja suman); en una foto con el móvil
+en alto, 2,4. El corte está en 2,0. En la web, la opción por defecto es
+«Conservar el original»: la madera generada se ve peor que la tuya.
 
 Con `--background wood` se sustituye siempre, y pasando la ruta de una foto tuya
 se usa esa superficie en lugar de la generada.
@@ -44,21 +76,22 @@ caché. Sin él, se conserva el fondo original y se dice por qué.
 ## Qué hace, en orden
 
 1. **Aplica la orientación EXIF.** El iPhone casi nunca gira los píxeles: guarda
-   la foto de lado y una etiqueta que dice cómo verla. Este es el arreglo de la
-   foto «tumbada».
-2. **Encuentra el producto.** Modela el color de la superficie a partir del
+   la foto de lado y una etiqueta que dice cómo verla.
+2. **Pone el móvil de pie.** Cuartos de vuelta según dónde estén las cámaras o
+   la Dynamic Island (ver arriba).
+3. **Encuentra el producto.** Modela el color de la superficie a partir del
    borde del encuadre y marca todo lo que se sale de ese modelo; después afina
    el contorno con GrabCut. No descarga ningún modelo ni necesita internet.
-3. **Endereza.** Mide la inclinación con dos métodos independientes —el
+4. **Endereza.** Mide la inclinación con dos métodos independientes —el
    rectángulo que mejor se ajusta al producto y la orientación dominante de sus
    bordes— y los combina. Si discrepan mucho, se queda con el más fiable; si el
    ángulo medido es absurdo, no gira nada.
-4. **Quita lo que no interesa.** Descarta lo que el encuadre corta por un borde
+5. **Quita lo que no interesa.** Descarta lo que el encuadre corta por un borde
    (una taza, el canto de la mesa, una mano) y las motas sueltas. Lo que está
    entero y junto al producto —un cable, la caja, la funda— se queda.
-5. **Reencuadra.** Elige la proporción que mejor le va al conjunto, centra el
+6. **Reencuadra.** Elige la proporción que mejor le va al conjunto, centra el
    producto y le deja aire alrededor.
-6. **Retoca lo justo.** Un ajuste suave de niveles y nitidez para que un lote
+7. **Retoca lo justo.** Un ajuste suave de niveles y nitidez para que un lote
    entero quede parejo. Sin tocar el color cálido de la madera.
 
 Nunca corta el producto: si algo tiene que ceder, cede el margen, y siempre te
@@ -167,10 +200,12 @@ Opciones que más se usan:
 | Opción | Para qué |
 | --- | --- |
 | `--ratio` | `auto` (por defecto), `original`, `free` o fijo: `4:5`, `1:1`, `2:3`… |
-| `--fill` | Cuánto ocupa el producto, de 0.3 a 1.0. Por defecto `0.86` |
+| `--fill` | Cuánto ocupa el producto, de 0.3 a 1.0. Por defecto `0.78` |
 | `--pad-to-ratio` | Fuerza un formato fijo ampliando el fondo si no cabe |
 | `--keep-extras` | No descartar los objetos secundarios |
-| `--no-straighten` | Recortar sin girar |
+| `--no-straighten` | Recortar sin enderezar |
+| `--turn` | `auto` (por defecto) o un giro fijo a la derecha: `90`, `180`, `270` |
+| `--no-upright` | No poner el móvil de pie |
 | `--max-side` | Lado mayor del resultado, `2000` por defecto |
 | `--background` | `auto`, `wood`, o la ruta de una foto de tu superficie |
 | `--keep-hands` | No intentar quitar la mano |
@@ -203,6 +238,7 @@ photofix/
   segment.py    localiza el producto contra su propia superficie
   cutout.py     lo recorta de cualquier fondo, y quita la mano
   background.py genera la superficie nueva y monta el producto encima
+  orient.py     decide qué lado del móvil es arriba
   geometry.py   mide la inclinación y gira sin perder nada
   framing.py    decide el recorte: forma, margen y posición
   enhance.py    el retoque final
@@ -233,6 +269,10 @@ Para verlas:
 ```
 
 ## Límites conocidos
+
+- Ponerlo de pie está ajustado con iPhone de los últimos años (cámaras en
+  esquina, Dynamic Island) y probado con pocas fotos reales. Con un Samsung, un
+  iPhone con notch o una funda, lo normal es que no gire y toque el botón.
 
 - Cuenta con que el fondo sea razonablemente uniforme y el producto no lo tape
   casi entero. Sobre una alfombra estampada o un mantel de cuadros la detección

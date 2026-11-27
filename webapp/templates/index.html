@@ -163,15 +163,15 @@
         </select>
       </div>
       <div>
-        <label for="fill">Tamaño del producto: <span id="fillv">86</span>%</label>
-        <input id="fill" type="range" min="40" max="100" value="86">
+        <label for="fill">Tamaño del producto: <span id="fillv">78</span>%</label>
+        <input id="fill" type="range" min="40" max="100" value="78">
       </div>
       <div>
         <label for="background">Fondo</label>
         <select id="background">
+          <option value="">Conservar el original</option>
           <option value="auto">Automático (cambiar solo si hace falta)</option>
           <option value="wood">Siempre madera</option>
-          <option value="">Conservar el original</option>
         </select>
       </div>
       <div class="switch">
@@ -269,7 +269,10 @@ function makeCard(it) {
       <div class="name">${esc(it.out_name)}</div>
       <div class="sum">${esc(it.summary)}</div>
       ${(it.warnings || []).map(w => `<div class="note">${esc(w)}</div>`).join('')}
-      <div class="row"><button class="save">Guardar</button></div>
+      <div class="row">
+        <button class="ghost turn" title="Girar 90° a la derecha">Girar ↻</button>
+        <button class="save">Guardar</button>
+      </div>
     </div>`;
 
   const box = card.querySelector('.compare');
@@ -310,7 +313,28 @@ function makeCard(it) {
   window.addEventListener('touchend', end);
 
   card.querySelector('.save').addEventListener('click', () => saveOne(it));
+  card.querySelector('.turn').addEventListener('click', () => turnOne(it, card));
   return card;
+}
+
+// One quarter turn clockwise on top of whatever was applied, decided by hand
+// from then on. Only this photo is processed again.
+async function turnOne(it, card) {
+  if (!job || busy) return;
+  setBusy(true, 'Girando…');
+  const fd = settings();
+  fd.append('name', it.name);
+  fd.append('turn', String(((it.turned || 0) + 90) % 360));
+  try {
+    const data = await send(`/api/turn/${job}`, fd);
+    const i = items.indexOf(it);
+    if (i >= 0) items[i] = data.item;
+    card.replaceWith(makeCard(data.item));
+    setBusy(false, 'Girada');
+  } catch (e) {
+    setBusy(false, e.message);
+    if (e.message.includes('caducado')) job = null;
+  }
 }
 
 function render(list) {

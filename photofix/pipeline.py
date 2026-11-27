@@ -9,7 +9,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from . import background, cutout, enhance, framing, geometry, io_utils, notes
+from . import background, cutout, enhance, framing, geometry, io_utils, notes, orient
 from .config import Config, resolve_ratio
 from .segment import Segmentation, segment
 from .segment import _describe as describe_components
@@ -20,6 +20,8 @@ class Report:
     """What the pipeline did, in terms a person can check."""
 
     ok: bool = True
+    turned_deg: int = 0              # quarter turn, clockwise
+    turn_source: str = ""
     rotated_deg: float = 0.0
     rotation_source: str = ""
     cropped: bool = False
@@ -37,6 +39,8 @@ class Report:
 
     def summary(self) -> str:
         bits = []
+        if self.turned_deg:
+            bits.append(f"turned {self.turned_deg}°")
         if abs(self.rotated_deg) >= 0.01:
             bits.append(f"straightened {self.rotated_deg:+.2f}°")
         else:
@@ -259,6 +263,48 @@ def _place_on_new_surface(
     return background.composite(layer, layer_alpha, canvas, shadow=cfg.shadow)
 
 
+# Orientation is read at a fixed size so that its edge-density thresholds mean
+# the same thing for a 12 MP original and a compressed copy from a chat app.
+ORIENT_SIZE = 1200
+
+
+def _turn_upright(
+    bgr: np.ndarray, cfg: Config, report: Report
+) -> tuple[np.ndarray, Segmentation | None]:
+    """Apply the quarter turn, fixed or detected. Returns the image and, when
+    it was not turned, the segmentation already made, so it is not redone."""
+    turn = str(cfg.turn).strip().lower()
+    if turn not in ("", "auto"):
+        deg = int(float(turn)) % 360
+        if deg % 90:
+            raise ValueError(f"turn must be a multiple of 90 degrees, not {cfg.turn!r}")
+        report.turned_deg = deg
+        report.turn_source = "manual"
+        k = (4 - deg // 90) % 4        # np.rot90 turns counter-clockwise
+        return (np.ascontiguousarray(np.rot90(bgr, k)) if k else bgr), None
+
+    if not cfg.upright:
+        return bgr, None
+
+    seg = segment(bgr, cfg)
+    if not (seg.confident and seg.components):
+        return bgr, seg
+
+    h, w = bgr.shape[:2]
+    k = min(1.0, ORIENT_SIZE / max(h, w))
+    small = bgr if k >= 1.0 else cv2.resize(
+        bgr, (max(1, round(w * k)), max(1, round(h * k))), interpolation=cv2.INTER_AREA)
+    mask = cv2.resize(seg.mask, (small.shape[1], small.shape[0]),
+                      interpolation=cv2.INTER_NEAREST)
+    found = orient.detect(small, mask)
+    report.turn_source = found.reason
+    if not found.confident or found.turns == 0:
+        return bgr, seg
+
+    report.turned_deg = ((4 - found.turns) % 4) * 90
+    return np.ascontiguousarray(np.rot90(bgr, found.turns)), None
+
+
 def process(bgr: np.ndarray, cfg: Config | None = None) -> Result:
     """Straighten, de-clutter and reframe a single product photo.
 
@@ -274,9 +320,12 @@ def process(bgr: np.ndarray, cfg: Config | None = None) -> Result:
     # only lose detail at the edges. It is the photos with no usable surface --
     # held in a hand, shot against a room -- that need a new one.
     seg: Segmentation | None = None
+    bgr, seg = _turn_upright(bgr, cfg, report)
+
     source = (cfg.background or "").strip()
     if source == "auto":
-        seg = segment(bgr, cfg)
+        if seg is None:
+            seg = segment(bgr, cfg)
         source = "" if (seg.confident and seg.uniform_surface) else "wood"
 
     if source:

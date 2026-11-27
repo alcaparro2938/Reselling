@@ -30,7 +30,7 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--ratio", default="auto",
                    help="auto, original, free, or one of: "
                         + ", ".join(sorted(RATIO_ALIASES)))
-    g.add_argument("--fill", type=float, default=0.86,
+    g.add_argument("--fill", type=float, default=0.78,
                    help="how much of the frame the product fills (0.3-1.0)")
     g.add_argument("--bias-y", type=float, default=0.0,
                    help="shift the product up (+) or down (-), as a fraction "
@@ -59,6 +59,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     g = p.add_argument_group("straightening")
     g.add_argument("--no-straighten", action="store_true")
+    g.add_argument("--no-upright", action="store_true",
+                   help="do not turn the phone so its top is up")
+    g.add_argument("--turn", default="auto",
+                   help="auto, or a fixed turn clockwise: 0, 90, 180, 270")
     g.add_argument("--max-rotation", type=float, default=25.0,
                    help="refuse corrections larger than this, in degrees")
 
@@ -86,6 +90,8 @@ def build_parser() -> argparse.ArgumentParser:
 def config_from_args(a: argparse.Namespace) -> Config:
     return Config(
         straighten=not a.no_straighten,
+        upright=not a.no_upright,
+        turn=a.turn,
         max_rotation=a.max_rotation,
         crop=not a.no_crop,
         ratio=a.ratio,
