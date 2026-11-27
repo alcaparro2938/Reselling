@@ -468,6 +468,21 @@ const PF = (() => {
     let sig2 = comps.filter(c => c.area >= n * 0.0015); if (!sig2.length) sig2 = comps.slice(0, 1);
     const main = sig2[0], kept = [main];
     for (const c of sig2.slice(1)) if (c.area >= main.area * 0.04 && !c.touches) kept.push(c);
+    // A large piece pressed against the product is part of it even where it
+    // reaches the frame edge: the tray of a box lying against its lid, with
+    // the phone in it. A charger or a sleeve coming in from the edge is
+    // either small or separated from the product by table.
+    {
+      const gap = Math.max(3, Math.round(Math.min(w, h) * 0.02)), keptIds = new Set(kept.map(c => c.id));
+      const km = new Uint8Array(n); for (let i = 0; i < n; i++) if (keptIds.has(labels[i])) km[i] = 1;
+      const near = dilate(km, w, h, gap);
+      for (const c of sig2) {
+        if (keptIds.has(c.id) || !c.touches || c.area < main.area * 0.1) continue;
+        let hit = false;
+        c.rows.forEach((r, y) => { if (hit) return; for (let x = r[0]; x <= r[1]; x++) if (labels[y * w + x] === c.id && near[y * w + x]) { hit = true; break; } });
+        if (hit) { kept.push(c); keptIds.add(c.id); }
+      }
+    }
     const keep = new Uint8Array(n), ids = new Set(kept.map(c => c.id));
     let kc = 0; for (let i = 0; i < n; i++) if (ids.has(labels[i])) { keep[i] = 1; kc++; }
     const coverage = kc / n;
@@ -847,7 +862,7 @@ const PF = (() => {
   }
 
   // ---------- framing and rendering ---------------------------------------
-  function planCrop(sub, W, H, A, fill, ratioPref, forbid, ratioList, centerTolY = 0.03) {
+  function planCrop(sub, W, H, A, fill, ratioPref, forbid, ratioList, centerTolY = 0.03, extraRatios = null) {
     // Rotated space: the original turned anticlockwise by A around its centre.
     const c = Math.cos(A), s = Math.sin(A), cx = W / 2, cy = H / 2;
     const inside = (x, y) => { const ox = c * x - s * y + cx, oy = s * x + c * y + cy, tol = 0.012 * Math.max(W, H);
@@ -867,13 +882,14 @@ const PF = (() => {
     // fit any of the usual shapes without cutting it or drowning it in
     // table: give it a frame of its own proportions.
     if (!ratioPref && !ratioList) { const own = sw / sh; if (own > 2.6 || own < 1 / 2.6) ratios = ratios.concat([Math.max(1 / 3, Math.min(3, own))]); }
-    const opts = ratios.map(r => { const cw = Math.max(sw / fill, r * sh / fill); return { r, cw, ch: cw / r, waste: cw * (cw / r) - sw * sh }; }).sort((a, b) => a.waste - b.waste);
+    const optsOf = rs => rs.map(r => { const cw = Math.max(sw / fill, r * sh / fill); return { r, cw, ch: cw / r, waste: cw * (cw / r) - sw * sh }; }).sort((a, b) => a.waste - b.waste);
+    const opts = optsOf(ratios), optsAll = extraRatios && !ratioPref ? opts.concat(optsOf(extraRatios)) : opts;
     // Centred first: a smaller margin around a centred product reads better
     // than a generous one with the product pushed to the side. Only when no
     // centred frame fits at all is the frame allowed to slide.
-    const search = (tolX, tolY, minF) => {
+    const search = (tolX, tolY, minF, list) => {
       let pick = null;
-      for (const o of opts) {
+      for (const o of list) {
         let found = null;
         for (let f = 1; f >= 0 && !found; f -= 0.02) {
           const cw = Math.max(sw, sw + (o.cw - sw) * f), ch = Math.max(sh, cw / o.r);
@@ -892,7 +908,12 @@ const PF = (() => {
       }
       return pick;
     };
-    let best = search(0.03, centerTolY, 0.15) || search(1, 1, 0);
+    // In order: centred with a proper margin in the preferred shapes; centred
+    // with a proper margin in any shape (a tall 2:3 keeps a phone that sits
+    // to one side of the photo centred without zooming in on it); centred
+    // with whatever margin fits; and only then off-centre.
+    let best = search(0.03, centerTolY, 0.6, opts) || search(0.03, centerTolY, 0.6, optsAll)
+      || search(0.03, centerTolY, 0.15, optsAll) || search(1, 1, 0, optsAll);
     if (!best) {
       // The product runs off the photo (an arm reaching in from the edge).
       // Cutting a little of it beats painting the missing corners flat:
@@ -1001,14 +1022,14 @@ const PF = (() => {
       // Held in a hand, the hand is part of the picture: the product gets
       // about half the frame, and the frame is squarish so the hand fits.
       const fill = held ? Math.min(opts.fill, 0.5) : opts.fill;
-      const shapes = held ? [5 / 4, 1, 4 / 5] : null;
+      const shapes = held ? [5 / 4, 1, 4 / 5] : null, moreShapes = held ? [3 / 4, 2 / 3, 4 / 3] : null;
       // In a hand the phone sits above the hand that holds it, so it may sit
       // a little high; side to side it is always centred.
       const tolY = held ? 0.15 : 0.03;
-      crop = planCrop(sub, W, H, A, fill, opts.ratio, forbid, shapes, tolY);
+      crop = planCrop(sub, W, H, A, fill, opts.ratio, forbid, shapes, tolY, moreShapes);
       if (crop.overflow || crop.trimmed) {
         // Nothing clean fits: better a little clutter than a cut product.
-        crop = planCrop(sub, W, H, A, fill, opts.ratio, null, shapes, tolY);
+        crop = planCrop(sub, W, H, A, fill, opts.ratio, null, shapes, tolY, moreShapes);
         report.notes.push("No se ha podido dejar fuera todo lo que rodea al producto sin cortarlo.");
       }
       if (held) report.hand = true;
