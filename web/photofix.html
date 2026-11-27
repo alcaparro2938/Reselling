@@ -1076,13 +1076,14 @@ function setBusy(on, t) { busy = on; if (t != null) setStatus(t); $("apply").dis
 const stem = n => n.replace(/\.[^.]+$/, "");
 const fmtDeg = a => (a > 0 ? "+" : "") + a.toFixed(1).replace(".", ",") + "°";
 
-function chipsFor(rep) {
+function chipsFor(rep, item) {
   const out = [];
   if (rep.turnCw) out.push(["girada " + rep.turnCw + "°" + (rep.turnWhy === "manual" ? " a mano" : rep.turnWhy === "camera" ? " · cámara" : rep.turnWhy === "island" ? " · Dynamic Island" : rep.turnWhy === "hand" ? " · por la mano" : rep.turnWhy === "text" ? " · por el texto" : ""), true]);
   out.push([Math.abs(rep.angle) >= 0.05 ? "enderezada " + fmtDeg(rep.angle) : "ya estaba recta", Math.abs(rep.angle) >= 0.05]);
   if (rep.hand) out.push(["en la mano", false]);
   if (rep.dropped) out.push(["fuera " + rep.dropped + (rep.dropped === 1 ? " objeto" : " objetos"), true]);
   out.push([rep.size[0] + "×" + rep.size[1] + " px", false]);
+  if (item && item.saved) out.push(["guardada ✓", true]);
   return out;
 }
 
@@ -1116,7 +1117,7 @@ function render(item) {
   const n = document.createElement("div"); n.className = "name"; n.textContent = item.sample ? "Ejemplo: brillo de un iPhone tumbado" : item.name; body.append(n);
   if (item.result) {
     const rep = item.result.report, facts = document.createElement("div"); facts.className = "facts";
-    for (const [t, on] of chipsFor(rep)) { const c = document.createElement("span"); c.className = "chip" + (on ? " on" : ""); c.textContent = t; facts.append(c); }
+    for (const [t, on] of chipsFor(rep, item)) { const c = document.createElement("span"); c.className = "chip" + (on ? " on" : ""); c.textContent = t; facts.append(c); }
     body.append(facts);
     for (const t of rep.notes) { const d = document.createElement("div"); d.className = "note"; d.textContent = t; body.append(d); }
     if (!rep.turnCw && rep.turnUnsure && !item.sample) { const d = document.createElement("div"); d.className = "note"; d.textContent = "No se ha girado: " + rep.turnUnsure + ". Si no está de pie, usa Girar."; body.append(d); }
@@ -1139,6 +1140,7 @@ async function run(item) {
     const res = await PF.process(img, o);
     if (item.result) URL.revokeObjectURL(item.result.url);
     item.result = { blob: res.blob, url: URL.createObjectURL(res.blob), report: res.report };
+    item.saved = false; resetSaveQueue();
     item.error = null;
   } catch (e) { item.error = e && e.message ? e.message : String(e); }
   item.working = false; render(item);
@@ -1177,38 +1179,55 @@ function outName(item) { return stem(item.name) + "-lista.jpg"; }
 async function saveOne(item) {
   if (!item.result) return;
   if (!downloads) { setStatus("Mantén pulsada la foto y elige «Guardar en Fotos»."); return; }
-  try { await downloads.save({ filename: outName(item), data: item.result.blob }); setStatus("Guardada: " + outName(item)); }
+  try { await downloads.save({ filename: outName(item), data: item.result.blob }); markSaved(item); setStatus("Guardada: " + outName(item)); }
   catch (e) { const c = e && e.code; setStatus(c === "declined" ? "No se ha guardado." : c === "rate_limited" ? "Espera un momento y vuelve a pulsar Guardar." : c === "host_unavailable" ? "Esta app no puede guardar archivos: ábrela en el navegador." : "No se ha podido guardar. Mantén pulsada la foto para guardarla."); }
 }
 
-// One after another, each through the share sheet, because that is where
-// iOS offers "Guardar imagen", which puts it in the camera roll. A .zip would
-// land in Files instead, which is no use for a listing.
+// One photo per tap. iOS opens the share sheet -- where "Guardar imagen"
+// puts the photo in the camera roll -- only in answer to a tap, so a loop
+// that saves the rest on its own gets the first one through and the others
+// blocked. The button walks through the batch instead: each tap saves the
+// next photo. A .zip would land in Files, not in the camera roll.
+let saveQueue = null;
+function markSaved(item) { item.saved = true; if (item.el && item.result) render(item); }
+function resetSaveQueue() { saveQueue = null; saveAllBtn.textContent = "Guardar todas"; }
 async function saveAll() {
-  const ready = items.filter(i => i.result && !i.sample);
-  if (!ready.length || busy) return;
+  if (busy) return;
   if (!downloads) { setStatus("Mantén pulsada cada foto y elige «Guardar en Fotos»."); return; }
-  setBusy(true);
-  let saved = 0;
-  for (let i = 0; i < ready.length; i++) {
-    setStatus("Guardando " + (i + 1) + " de " + ready.length + ": toca «Guardar imagen»");
-    let tries = 0;
-    for (;;) {
-      try { await downloads.save({ filename: outName(ready[i]), data: ready[i].result.blob }); saved++; break; }
-      catch (e) {
-        const c = e && e.code;
-        if (c === "rate_limited" && tries++ < 3) { await new Promise(r => setTimeout(r, 1200)); continue; }
-        setBusy(false, c === "declined" ? "Guardadas " + saved + " de " + ready.length + ". Has cancelado la siguiente." : "Guardadas " + saved + " de " + ready.length + ". No se ha podido guardar la siguiente.");
-        return;
-      }
+  if (!saveQueue) {
+    const ready = items.filter(i => i.result && !i.sample);
+    if (!ready.length) return;
+    const pending = ready.filter(i => !i.saved);
+    saveQueue = { list: pending.length ? pending : ready, at: 0 };
+  }
+  const q = saveQueue, item = q.list[q.at], total = q.list.length;
+  let tries = 0;
+  for (;;) {
+    try { await downloads.save({ filename: outName(item), data: item.result.blob }); break; }
+    catch (e) {
+      const c = e && e.code;
+      if (c === "rate_limited" && tries++ < 2) { await new Promise(r => setTimeout(r, 1000)); continue; }
+      setStatus(c === "declined" ? "No se ha guardado la " + (q.at + 1) + " de " + total + ". Toca otra vez para reintentarlo."
+        : c === "host_unavailable" ? "Esta app no puede guardar archivos: ábrela en el navegador."
+        : "No se ha podido guardar la " + (q.at + 1) + " de " + total + ". Toca otra vez para reintentarlo.");
+      saveAllBtn.textContent = "Guardar " + (q.at + 1) + " de " + total;
+      return;
     }
   }
-  setBusy(false, saved === 1 ? "Foto guardada" : saved + " fotos guardadas");
+  markSaved(item);
+  q.at++;
+  if (q.at < total) {
+    saveAllBtn.textContent = "Guardar siguiente (" + (q.at + 1) + " de " + total + ")";
+    setStatus("Guardada " + q.at + " de " + total + ". Toca para la siguiente.");
+  } else {
+    resetSaveQueue();
+    setStatus(total === 1 ? "Foto guardada" : "Las " + total + " fotos guardadas");
+  }
 }
 
 function updateHint() {
   hint.textContent = downloads
-    ? "Guardar abre la hoja de compartir del iPhone: toca «Guardar imagen» y va al carrete. «Guardar todas» las pasa una detrás de otra."
+    ? "Guardar abre la hoja de compartir del iPhone: toca «Guardar imagen» y va al carrete. Con «Guardar todas», cada toque guarda una foto y el botón pasa a la siguiente: el iPhone solo deja guardar en respuesta a un toque."
     : "Para guardar, mantén pulsada la foto corregida y elige «Guardar en Fotos».";
 }
 
