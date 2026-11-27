@@ -219,10 +219,22 @@ const PF = (() => {
     const k = Math.min(1, maxSide / Math.max(sw, sh));
     const w = Math.max(1, Math.round(sw * k)), h = Math.max(1, Math.round(sh * k));
     const c = document.createElement("canvas"); c.width = w; c.height = h;
-    const ctx = c.getContext("2d", { willReadFrequently: true });
+    const ctx = context2d(c);
     ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = "high";
     ctx.drawImage(src, 0, 0, w, h);
-    return { rgba: ctx.getImageData(0, 0, w, h).data, w, h, k };
+    const rgba = ctx.getImageData(0, 0, w, h).data;
+    release(c);
+    return { rgba, w, h, k };
+  }
+  // On an iPhone, canvas memory is capped for the whole page and a canvas
+  // keeps its memory until it is collected, which can be long after it is
+  // last used. Every canvas here is emptied as soon as it has done its job;
+  // without that a batch of 12-megapixel photos ran the page out of memory.
+  function release(c) { c.width = 0; c.height = 0; }
+  function context2d(c) {
+    const ctx = c.getContext("2d", { willReadFrequently: true });
+    if (!ctx) throw new Error("el iPhone se ha quedado sin memoria para imágenes. Procesa menos fotos de cada vez");
+    return ctx;
   }
   function grayOf(rgba, w, h) {
     const g = new Uint8Array(w * h);
@@ -787,7 +799,7 @@ const PF = (() => {
     const sc = Math.min(1, 2400 / Math.max(x1 - x0, y1 - y0)), w = Math.max(1, Math.round((x1 - x0) * sc)), h = Math.max(1, Math.round((y1 - y0) * sc));
     if (w < 60 || h < 60) return null;
     const cv = document.createElement("canvas"); cv.width = w; cv.height = h;
-    const ctx = cv.getContext("2d", { willReadFrequently: true });
+    const ctx = context2d(cv);
     ctx.drawImage(img, x0, y0, x1 - x0, y1 - y0, 0, 0, w, h);
     const g = grayOf(ctx.getImageData(0, 0, w, h).data, w, h); cv.width = cv.height = 0;
     // The product's own area, pulled in from its outline.
@@ -947,6 +959,17 @@ const PF = (() => {
     ctx.putImageData(id, 0, 0);
   }
 
+  const PREVIEW = 1100;
+  async function preview(src, w, h) {
+    const k = Math.min(1, PREVIEW / Math.max(w, h)), pw = Math.max(1, Math.round(w * k)), ph = Math.max(1, Math.round(h * k));
+    const c = document.createElement("canvas"); c.width = pw; c.height = ph;
+    const ctx = context2d(c); ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(src, 0, 0, pw, ph);
+    const b = await new Promise(r => c.toBlob(r, "image/jpeg", 0.85));
+    release(c);
+    return b;
+  }
+
   async function loadImage(blobOrUrl) {
     const img = new Image(); img.decoding = "async";
     img.src = typeof blobOrUrl === "string" ? blobOrUrl : URL.createObjectURL(blobOrUrl);
@@ -1041,7 +1064,7 @@ const PF = (() => {
     const scale = Math.min(1, MAX_OUT / Math.max(crop.cw, crop.ch));
     const ow = Math.max(1, Math.round(crop.cw * scale)), oh = Math.max(1, Math.round(crop.ch * scale));
     const cv = document.createElement("canvas"); cv.width = ow; cv.height = oh;
-    const ctx = cv.getContext("2d", { willReadFrequently: true });
+    const ctx = context2d(cv);
     ctx.fillStyle = "rgb(" + seg.bg.map(Math.round).join(",") + ")"; ctx.fillRect(0, 0, ow, oh);
     ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = "high";
     const c = Math.cos(A), s = Math.sin(A);
@@ -1054,8 +1077,13 @@ const PF = (() => {
     report.size = [ow, oh];
     if (Math.max(ow, oh) < 1000) report.notes.push("Ha salido pequeña (" + ow + "×" + oh + " px) porque la foto de partida lo es. Usa el original del carrete, no una copia de WhatsApp ni una captura.");
     const blob = await new Promise(r => cv.toBlob(r, "image/jpeg", 0.92));
-    cv.width = cv.height = 0;
-    return { blob, report };
+    // The cards show small copies. A 2000-pixel result costs 12 MB on screen
+    // and the hidden original for "Ver original" 48 MB at 12 megapixels; a
+    // batch of those is what the iPhone cannot hold.
+    const after = await preview(cv, ow, oh), before = await preview(img, W, H);
+    release(cv);
+    if (!blob) throw new Error("no se ha podido crear la imagen: el iPhone se ha quedado sin memoria. Procesa menos fotos de cada vez");
+    return { blob, after, before, report };
   }
   return { process, loadImage, turnsFor, foldDeg, _segment: segment };
 })();
@@ -1102,12 +1130,14 @@ function render(item) {
     // the frame comes out portrait), so a wipe between them says nothing.
     // A tap shows one or the other, each at its own shape.
     const after = document.createElement("img"); after.className = "after"; after.alt = "Foto corregida de " + item.name; after.src = item.result.url;
-    const before = document.createElement("img"); before.className = "before"; before.alt = "Original de " + item.name; before.src = item.srcUrl; before.hidden = true;
+    const before = document.createElement("img"); before.className = "before"; before.alt = "Original de " + item.name; before.hidden = true;
+    // Loaded only when asked for, and as the small copy.
+    const beforeSrc = item.beforeUrl || item.srcUrl;
     const tag = document.createElement("span"); tag.className = "tag r"; tag.textContent = "DESPUÉS";
     const flip = document.createElement("button"); flip.type = "button"; flip.className = "flip"; flip.textContent = "Ver original";
     stage.append(after, before, tag, flip);
     if (item.sample) { const t = document.createElement("span"); t.className = "tag l sample"; t.textContent = "EJEMPLO"; stage.append(t); }
-    const show = orig => { before.hidden = !orig; after.hidden = orig; tag.textContent = orig ? "ANTES" : "DESPUÉS"; flip.textContent = orig ? "Ver corregida" : "Ver original"; };
+    const show = orig => { if (orig && !before.src) before.src = beforeSrc; before.hidden = !orig; after.hidden = orig; tag.textContent = orig ? "ANTES" : "DESPUÉS"; flip.textContent = orig ? "Ver corregida" : "Ver original"; };
     flip.addEventListener("click", () => show(after.hidden === false));
   }
   if (item.working) { const v = document.createElement("div"); v.className = "busy-veil"; v.textContent = "Procesando…"; stage.append(v); }
@@ -1134,15 +1164,28 @@ function render(item) {
 
 async function run(item) {
   item.working = true; render(item);
-  try {
-    const img = await PF.loadImage(item.srcUrl);
-    const o = opts(); o.turnCw = item.manualTurn;
-    const res = await PF.process(img, o);
-    if (item.result) URL.revokeObjectURL(item.result.url);
-    item.result = { blob: res.blob, url: URL.createObjectURL(res.blob), report: res.report };
-    item.saved = false; resetSaveQueue();
-    item.error = null;
-  } catch (e) { item.error = e && e.message ? e.message : String(e); }
+  for (let attempt = 0; attempt < 2; attempt++) {
+    let img = null;
+    try {
+      img = await PF.loadImage(item.srcUrl);
+      const o = opts(); o.turnCw = item.manualTurn;
+      const res = await PF.process(img, o);
+      if (item.result) { URL.revokeObjectURL(item.result.url); }
+      if (item.beforeUrl) URL.revokeObjectURL(item.beforeUrl);
+      item.result = { blob: res.blob, url: URL.createObjectURL(res.after || res.blob), report: res.report };
+      item.beforeUrl = res.before ? URL.createObjectURL(res.before) : null;
+      item.saved = false; resetSaveQueue();
+      item.error = null;
+      break;
+    } catch (e) {
+      item.error = e && e.message ? e.message : String(e);
+      // Decoding a large photo can fail when memory is short for a moment;
+      // one more try after a pause usually goes through.
+      await new Promise(r => setTimeout(r, 600));
+    } finally {
+      if (img) { img.src = ""; img = null; }   // let go of the decoded original
+    }
+  }
   item.working = false; render(item);
   await new Promise(r => setTimeout(r, 0));
 }
@@ -1254,6 +1297,7 @@ for (const id of ["fill", "ratio", "upright", "levels"]) $(id).addEventListener(
   items.push(sample); cards.append(render(sample));
   setBusy(true);
   await run(sample);
+  if (sample.error) { sample.el.remove(); items = items.filter(i => i !== sample); }
   setBusy(false, sample.error ? "Elige tus fotos para empezar." : "Así queda una foto. Elige las tuyas.");
   if (window.claude && window.claude.use) {
     try { downloads = await window.claude.use("downloads"); } catch (e) { downloads = null; }
