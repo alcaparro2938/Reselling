@@ -451,6 +451,26 @@ const PF = (() => {
     return pts.filter((_, j) => assign[j] === keep);
   }
 
+  function smoothAreas(L, w, h, bidx) {
+    const n = w * h, ii = new Float64Array((w + 1) * (h + 1)), i2 = new Float64Array((w + 1) * (h + 1));
+    for (let y = 0; y < h; y++) { let a = 0, b = 0; for (let x = 0; x < w; x++) { const v = L[y * w + x]; a += v; b += v * v;
+      ii[(y + 1) * (w + 1) + x + 1] = ii[y * (w + 1) + x + 1] + a; i2[(y + 1) * (w + 1) + x + 1] = i2[y * (w + 1) + x + 1] + b; } }
+    const R = 4, sd = new Float32Array(n);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const ax = Math.max(0, x - R), ay = Math.max(0, y - R), bx = Math.min(w, x + R + 1), by = Math.min(h, y + R + 1), c = (bx - ax) * (by - ay);
+      const s1 = ii[by * (w + 1) + bx] - ii[ay * (w + 1) + bx] - ii[by * (w + 1) + ax] + ii[ay * (w + 1) + ax];
+      const s2 = i2[by * (w + 1) + bx] - i2[ay * (w + 1) + bx] - i2[by * (w + 1) + ax] + i2[ay * (w + 1) + ax];
+      sd[y * w + x] = Math.sqrt(Math.max(0, s2 / c - (s1 / c) ** 2));
+    }
+    const bs = bidx.map(i => sd[i]).sort((a, b) => a - b), cut = 0.5 * bs[Math.floor(bs.length * 0.1)];
+    let m = new Uint8Array(n); for (let i = 0; i < n; i++) m[i] = sd[i] < cut ? 1 : 0;
+    m = dilate(erode(m, w, h, 3), w, h, 3);
+    // Only sizeable smooth areas: a smooth patch of grain is small.
+    const { lab, comps } = components(m, w, h), big = new Set(comps.filter(c => c.area >= n * 0.004).map(c => c.id));
+    for (let i = 0; i < n; i++) m[i] = big.has(lab[i]) ? 1 : 0;
+    return m;
+  }
+
   function segment(work) {
     const { rgba, w, h } = work, n = w * h;
     const lab = labOf(rgba, w, h), bidx = borderIdx(w, h, BORDER_FRAC);
@@ -463,6 +483,13 @@ const PF = (() => {
       let d = 0; for (let c = 0; c < 3; c++) { const z = (lab[c][i] - med[c]) / sig[c] * wts[c]; d += z * z; }
       raw[i] = Math.sqrt(d) > THRESH_K ? 1 : 0;
     }
+    // Colour alone fails on grey wood with a black phone and a white box:
+    // all three are neutral, and the grain spreads the lightness the table
+    // is allowed so wide that both pass for wood. But wood has grain and a
+    // phone or a box is smooth. Large areas much smoother than the table's
+    // own border count as product too.
+    const smooth = smoothAreas(lab[0], w, h, bidx);
+    for (let i = 0; i < n; i++) if (smooth[i]) raw[i] = 1;
     const k = Math.max(3, Math.round(Math.min(w, h) * 0.012) | 1), r = (k - 1) >> 1;
     raw = erode(erode(dilate(dilate(raw, w, h, r), w, h, r), w, h, r), w, h, r);
     raw = dilate(erode(raw, w, h, r), w, h, r);
@@ -756,34 +783,40 @@ const PF = (() => {
       .map(c => { const r = minAreaRect(rowPoints(c.rows)); if (!r || Math.min(r.w, r.h) < 12) return null;
         return { area: c.area, aspect: Math.max(r.w, r.h) / Math.min(r.w, r.h), fill: c.area / (r.w * r.h), rect: r }; })
       .filter(Boolean);
-    const phones = cands.filter(c => c.aspect >= PHONE_ASPECT[0] && c.aspect <= PHONE_ASPECT[1] && c.fill >= 0.85);
-    let rect, whole;
-    if (phones.length) { rect = phones.sort((a, b) => b.area - a.area)[0].rect; whole = true; }
-    else {
-      rect = mainRect; whole = false;
-      const asp = Math.max(rect.w, rect.h) / Math.max(Math.min(rect.w, rect.h), 1e-6);
+    const phones = cands.filter(c => c.aspect >= PHONE_ASPECT[0] && c.aspect <= PHONE_ASPECT[1] && c.fill >= 0.8);
+    // Every phone-shaped outline is tried, biggest first, until one shows a
+    // camera or an island: a box lid has a phone's proportions too, and the
+    // phone lying in its tray can come out with a ragged outline.
+    const judge = (rect, whole) => {
+      const views = [0, 1].map(e => canonical(g, w, h, rect, e));
+      if (whole) {
+        const isl = views.map(hasIsland);
+        if (isl[0] !== isl[1]) return { turns: turnsFor(views[isl[0] ? 0 : 1].dir), why: "island" };
+      }
+      // Lenses are the strongest sign there is: two or more round, rimmed
+      // areas at one end and none at the other. This is what turns a close-up
+      // of the camera, where only part of the phone is in the photo.
+      const lenses = views.map(lensCount);
+      const st = views.map(cornerEdges), tls = st.map(s => s[0]), mids = st.map(s => s[1]);
+      if (Math.max(...lenses) >= 2 && Math.min(...lenses) === 0) return { turns: turnsFor(views[lenses[0] ? 0 : 1].dir), why: "camera" };
+      // Round shapes at both ends (wood grain can close into a loop): turn
+      // only if the end with more of them is also clearly the busier one.
+      if (Math.max(...lenses) >= 2 && lenses[0] !== lenses[1]) {
+        const e = lenses[0] > lenses[1] ? 0 : 1;
+        if (tls[e] >= 1.5 * Math.max(tls[1 - e], 0.01)) return { turns: turnsFor(views[e].dir), why: "camera" };
+      }
+      const hi = tls[0] >= tls[1] ? 0 : 1, lo = 1 - hi;
+      const back = whole ? Math.max(...mids) < BACK_MAX_MID && tls[hi] >= 2 * Math.max(tls[lo], 0.01) : tls[hi] >= 2.5 * Math.max(tls[lo], 0.01);
+      if (back && tls[hi] >= 2.5 * Math.max(...mids)) return { turns: turnsFor(views[hi].dir), why: "camera" };
+      return null;
+    };
+    if (phones.length) {
+      for (const c of phones.sort((a, b) => b.area - a.area)) { const r = judge(c.rect, true); if (r) return r; }
+    } else {
+      const rect = mainRect, asp = Math.max(rect.w, rect.h) / Math.max(Math.min(rect.w, rect.h), 1e-6);
       if (mainFill < 0.8 || Math.min(rect.w, rect.h) < 12 || asp > 3) return { turns: 0, why: "no se ve el contorno del móvil" };
+      const r = judge(rect, false); if (r) return r;
     }
-    const views = [0, 1].map(e => canonical(g, w, h, rect, e));
-    if (whole) {
-      const isl = views.map(hasIsland);
-      if (isl[0] !== isl[1]) return { turns: turnsFor(views[isl[0] ? 0 : 1].dir), why: "island" };
-    }
-    // Lenses are the strongest sign there is: two or more round, rimmed
-    // areas at one end and none at the other. This is what turns a close-up
-    // of the camera, where only part of the phone is in the photo.
-    const lenses = views.map(lensCount);
-    const st = views.map(cornerEdges), tls = st.map(s => s[0]), mids = st.map(s => s[1]);
-    if (Math.max(...lenses) >= 2 && Math.min(...lenses) === 0) return { turns: turnsFor(views[lenses[0] ? 0 : 1].dir), why: "camera" };
-    // Round shapes at both ends (wood grain can close into a loop): turn
-    // only if the end with more of them is also clearly the busier one.
-    if (Math.max(...lenses) >= 2 && lenses[0] !== lenses[1]) {
-      const e = lenses[0] > lenses[1] ? 0 : 1;
-      if (tls[e] >= 1.5 * Math.max(tls[1 - e], 0.01)) return { turns: turnsFor(views[e].dir), why: "camera" };
-    }
-    const hi = tls[0] >= tls[1] ? 0 : 1, lo = 1 - hi;
-    const back = whole ? Math.max(...mids) < BACK_MAX_MID && tls[hi] >= 2 * Math.max(tls[lo], 0.01) : tls[hi] >= 2.5 * Math.max(tls[lo], 0.01);
-    if (back && tls[hi] >= 2.5 * Math.max(...mids)) return { turns: turnsFor(views[hi].dir), why: "camera" };
     return { turns: 0, why: "no se ve con claridad la cámara, la Dynamic Island ni texto legible" };
   }
 
