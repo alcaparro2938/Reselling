@@ -144,6 +144,11 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 }
 .bar .status { flex: 2; font-size: 13px; color: var(--muted); min-width: 0; }
 .bar button { flex: 1; max-width: 240px; }
+.steps { background: var(--accent-soft); border-radius: var(--radius); padding: 16px; display: grid; gap: 10px; scroll-margin-top: calc(110px + env(safe-area-inset-top, 0px)); }
+.steps h2 { margin: 0; font-family: var(--font-display); font-size: 17px; }
+.steps ol { margin: 0; padding-left: 20px; display: grid; gap: 8px; font-size: 14px; }
+.steps p { margin: 0; font-size: 13px; color: var(--muted); }
+.steps button { justify-self: start; flex: none; }
 .hint { font-size: 13px; color: var(--muted); text-align: center; }
 @media (prefers-reduced-motion: no-preference) { .card { animation: rise .25s ease-out both; } }
 @keyframes rise { from { transform: translateY(6px); } to { transform: none; } }
@@ -190,6 +195,18 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
       <button class="ghost apply" id="apply" type="button">Aplicar a todas</button>
     </div>
   </details>
+
+  <section class="steps" id="zipSteps" hidden aria-labelledby="zipTitle">
+    <h2 id="zipTitle">Pasar las <span id="zipCount">0</span> fotos al carrete</h2>
+    <ol>
+      <li>En la pantalla que se abre, toca <strong>Compartir</strong> (el cuadrado con la flecha) y elige <strong>«Guardar en Archivos»</strong>.</li>
+      <li>Abre la app <strong>Archivos</strong> y toca <strong>fotos-listas.zip</strong>: se convierte en una carpeta.</li>
+      <li>Entra en la carpeta, toca <strong>⋯</strong> → <strong>Seleccionar</strong> → <strong>Seleccionar todo</strong>.</li>
+      <li>Toca <strong>Compartir</strong> y elige <strong>«Guardar N imágenes»</strong>. Ya están en Fotos.</li>
+    </ol>
+    <p>El iPhone no deja que una página web guarde varias fotos de golpe en el carrete; este es el único camino para pasarlas todas juntas.</p>
+    <button class="ghost" type="button" id="zipClose">Entendido</button>
+  </section>
 
   <div class="cards" id="cards" aria-live="polite"></div>
   <p class="hint" id="hint"></p>
@@ -1259,51 +1276,72 @@ async function saveOne(item) {
   catch (e) { const c = e && e.code; setStatus(c === "declined" ? "No se ha guardado." : c === "rate_limited" ? "Espera un momento y vuelve a pulsar Guardar." : c === "host_unavailable" ? "Esta app no puede guardar archivos: ábrela en el navegador." : "No se ha podido guardar. Mantén pulsada la foto para guardarla."); }
 }
 
-// One photo per tap. iOS opens the share sheet -- where "Guardar imagen"
-// puts the photo in the camera roll -- only in answer to a tap, so a loop
-// that saves the rest on its own gets the first one through and the others
-// blocked. The button walks through the batch instead: each tap saves the
-// next photo. A .zip would land in Files, not in the camera roll.
-let saveQueue = null;
+// All of them in one go. A web page cannot put several photos in the camera
+// roll at once: each save opens its own screen, and from there it takes
+// Compartir -> "Guardar imagen" -> back, photo by photo. The one route iOS
+// offers for a batch is the Files app: a .zip saved there unpacks into a
+// folder, and from the folder "Seleccionar todo" -> Compartir -> "Guardar N
+// imágenes" puts every photo in the camera roll at once.
 function markSaved(item) { item.saved = true; if (item.el && item.result) render(item); }
-function resetSaveQueue() { saveQueue = null; saveAllBtn.textContent = "Guardar todas"; }
+function resetSaveQueue() {}
+const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+function crc32(u8) { let c = 0xffffffff; for (let i = 0; i < u8.length; i++) c = CRC[(c ^ u8[i]) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; }
+// A plain stored zip: JPEGs do not compress further, and every unzipper
+// reads this form.
+async function zip(entries) {
+  const enc = new TextEncoder(), parts = [], central = []; let offset = 0;
+  const now = new Date(), dosTime = (now.getHours() << 11) | (now.getMinutes() << 5) | (now.getSeconds() >> 1), dosDate = ((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate();
+  for (const { name, blob } of entries) {
+    const data = new Uint8Array(await blob.arrayBuffer()), nm = enc.encode(name), crc = crc32(data);
+    const lh = new DataView(new ArrayBuffer(30));
+    lh.setUint32(0, 0x04034b50, true); lh.setUint16(4, 20, true); lh.setUint16(6, 0x0800, true); lh.setUint16(8, 0, true);
+    lh.setUint16(10, dosTime, true); lh.setUint16(12, dosDate, true);
+    lh.setUint32(14, crc, true); lh.setUint32(18, data.length, true); lh.setUint32(22, data.length, true); lh.setUint16(26, nm.length, true);
+    parts.push(lh.buffer, nm, data);
+    const ch = new DataView(new ArrayBuffer(46));
+    ch.setUint32(0, 0x02014b50, true); ch.setUint16(4, 20, true); ch.setUint16(6, 20, true); ch.setUint16(8, 0x0800, true);
+    ch.setUint16(12, dosTime, true); ch.setUint16(14, dosDate, true);
+    ch.setUint32(16, crc, true); ch.setUint32(20, data.length, true); ch.setUint32(24, data.length, true); ch.setUint16(28, nm.length, true); ch.setUint32(42, offset, true);
+    central.push(ch.buffer, nm);
+    offset += 30 + nm.length + data.length;
+  }
+  const csize = central.reduce((s, p) => s + (p.byteLength || p.length), 0), end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0, 0x06054b50, true); end.setUint16(8, entries.length, true); end.setUint16(10, entries.length, true); end.setUint32(12, csize, true); end.setUint32(16, offset, true);
+  return new Blob([...parts, ...central, end.buffer], { type: "application/zip" });
+}
+function showZipSteps(n) {
+  const box = $("zipSteps");
+  $("zipCount").textContent = String(n);
+  box.hidden = false;
+  box.scrollIntoView({ behavior: "smooth", block: "start" });
+}
 async function saveAll() {
   if (busy) return;
+  const ready = items.filter(i => i.result && !i.sample);
+  if (!ready.length) return;
+  if (ready.length === 1) return saveOne(ready[0]);
   if (!downloads) { setStatus("Mantén pulsada cada foto y elige «Guardar en Fotos»."); return; }
-  if (!saveQueue) {
-    const ready = items.filter(i => i.result && !i.sample);
-    if (!ready.length) return;
-    const pending = ready.filter(i => !i.saved);
-    saveQueue = { list: pending.length ? pending : ready, at: 0 };
-  }
-  const q = saveQueue, item = q.list[q.at], total = q.list.length;
-  let tries = 0;
-  for (;;) {
-    try { await downloads.save({ filename: outName(item), data: item.result.blob }); break; }
-    catch (e) {
-      const c = e && e.code;
-      if (c === "rate_limited" && tries++ < 2) { await new Promise(r => setTimeout(r, 1000)); continue; }
-      setStatus(c === "declined" ? "No se ha guardado la " + (q.at + 1) + " de " + total + ". Toca otra vez para reintentarlo."
-        : c === "host_unavailable" ? "Esta app no puede guardar archivos: ábrela en el navegador."
-        : "No se ha podido guardar la " + (q.at + 1) + " de " + total + ". Toca otra vez para reintentarlo.");
-      saveAllBtn.textContent = "Guardar " + (q.at + 1) + " de " + total;
-      return;
-    }
-  }
-  markSaved(item);
-  q.at++;
-  if (q.at < total) {
-    saveAllBtn.textContent = "Guardar siguiente (" + (q.at + 1) + " de " + total + ")";
-    setStatus("Guardada " + q.at + " de " + total + ". Toca para la siguiente.");
-  } else {
-    resetSaveQueue();
-    setStatus(total === 1 ? "Foto guardada" : "Las " + total + " fotos guardadas");
+  setBusy(true, "Preparando " + ready.length + " fotos…");
+  let z;
+  try {
+    const used = new Set();
+    const entries = ready.map(i => { let n = outName(i), k = 2; while (used.has(n)) n = stem(i.name) + "-lista-" + k++ + ".jpg"; used.add(n); return { name: n, blob: i.result.blob }; });
+    z = await zip(entries);
+  } catch (e) { setBusy(false, "No se ha podido preparar el archivo con las fotos."); return; }
+  setBusy(false, "Fotos listas para guardar");
+  showZipSteps(ready.length);
+  try {
+    await downloads.save({ filename: "fotos-listas.zip", data: z });
+    setStatus("Guárdalo en Archivos y sigue los pasos de arriba.");
+  } catch (e) {
+    const c = e && e.code;
+    setStatus(c === "declined" ? "No se ha guardado. Vuelve a tocar «Guardar todas»." : c === "host_unavailable" ? "Esta app no puede guardar archivos: ábrela en el navegador." : "No se ha podido guardar. Vuelve a intentarlo.");
   }
 }
 
 function updateHint() {
   hint.textContent = downloads
-    ? "Guardar abre la hoja de compartir del iPhone: toca «Guardar imagen» y va al carrete. Con «Guardar todas», cada toque guarda una foto y el botón pasa a la siguiente: el iPhone solo deja guardar en respuesta a un toque."
+    ? "Una foto: «Guardar» en su tarjeta, luego Compartir → «Guardar imagen». Todas a la vez: «Guardar todas» y los pasos que aparecen."
     : "Para guardar, mantén pulsada la foto corregida y elige «Guardar en Fotos».";
 }
 
@@ -1319,6 +1357,7 @@ pick.addEventListener("drop", e => { e.preventDefault(); pick.classList.remove("
 $("fill").addEventListener("input", () => { $("fillv").textContent = $("fill").value; });
 $("apply").addEventListener("click", applyAll);
 saveAllBtn.addEventListener("click", saveAll);
+$("zipClose").addEventListener("click", () => { $("zipSteps").hidden = true; });
 try { const s = JSON.parse(localStorage.getItem("photofix-settings") || "null"); if (s) { $("fill").value = s.fill; $("fillv").textContent = s.fill; $("ratio").value = s.ratio; $("upright").checked = s.upright; $("levels").checked = s.levels; } } catch (e) {}
 for (const id of ["fill", "ratio", "upright", "levels"]) $(id).addEventListener("change", () => {
   try { localStorage.setItem("photofix-settings", JSON.stringify({ fill: $("fill").value, ratio: $("ratio").value, upright: $("upright").checked, levels: $("levels").checked })); } catch (e) {}
